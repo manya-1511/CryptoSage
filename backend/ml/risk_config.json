@@ -1,0 +1,80 @@
+{
+  "category_weights": {
+    "algorithm_strength": 30,
+    "deprecated_algorithm": 20,
+    "binary_security": 30,
+    "firmware_metadata": 15
+  },
+  "confidence_adjustment": {
+    "low_confidence_threshold": 50.0,
+    "minimum_trust_factor": 0.85,
+    "neutral_baseline": 0.5,
+    "note": "Below the threshold, the algorithm_strength + deprecated_algorithm subscores are blended toward a neutral 0.5 by up to (1 - minimum_trust_factor); binary_security and firmware_metadata factors are never adjusted, since they do not depend on the ML prediction being correct."
+  },
+  "algorithm_strength_scores": {
+    "AES": 0.05,
+    "SHA256": 0.05,
+    "SHA384": 0.05,
+    "SHA512": 0.05,
+    "SHA3": 0.05,
+    "SHA224": 0.3,
+    "ChaCha20": 0.05,
+    "Poly1305": 0.1,
+    "ECC": 0.1,
+    "X25519": 0.05,
+    "Ed25519": 0.05,
+    "RSA": 0.2,
+    "Camellia": 0.15,
+    "Twofish": 0.15,
+    "HMAC": 0.1,
+    "Argon2": 0.05,
+    "PBKDF2": 0.2,
+    "HKDF": 0.1,
+    "Blowfish": 0.5,
+    "DES": 0.95,
+    "3DES": 0.7,
+    "RC4": 0.95,
+    "MD5": 0.9,
+    "SHA1": 0.8,
+    "_default_unknown_algorithm": 0.5
+  },
+  "deprecated_algorithms": ["DES", "3DES", "RC4", "MD5", "SHA1"],
+  "binary_security_weights": {
+    "writable_executable_section": 20,
+    "debug_symbols_present": 10,
+    "high_entropy": 10,
+    "missing_symbols": 8,
+    "suspicious_imports": 15,
+    "hardcoded_crypto_constants": 7,
+    "weak_compiler_protections": 15,
+    "large_executable_surface": 5,
+    "missing_relocation_protection": 15,
+    "missing_stack_protection": 15
+  },
+  "firmware_metadata_weights": {
+    "unknown_compiler": 25,
+    "old_compiler": 20,
+    "architecture_mismatch": 20,
+    "missing_metadata": 20,
+    "firmware_age": 15
+  },
+  "thresholds": {
+    "high_entropy_threshold": 7.5,
+    "large_binary_bytes": 5000000,
+    "old_gcc_major_version": 7,
+    "old_clang_major_version": 8,
+    "old_firmware_age_days": 1825,
+    "supported_architectures": ["x86_64", "arm", "arm64", "mips", "x86"]
+  },
+  "suspicious_import_functions": [
+    "system", "exec", "execve", "execl", "popen", "strcpy", "strcat",
+    "gets", "sprintf", "vsprintf", "memcpy", "alloca"
+  ],
+  "risk_levels": [
+    {"min": 0, "max": 20, "level": "Safe"},
+    {"min": 21, "max": 40, "level": "Low"},
+    {"min": 41, "max": 60, "level": "Medium"},
+    {"min": 61, "max": 80, "level": "High"},
+    {"min": 81, "max": 100, "level": "Critical"}
+  ]
+}

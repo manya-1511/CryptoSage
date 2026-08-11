@@ -1,0 +1,31 @@
+{
+  "algorithm_recommendations": {
+    "SHA1": "Upgrade to SHA-256 or SHA-3.",
+    "MD5": "Upgrade to SHA-256 or SHA-3; MD5 is cryptographically broken (collision attacks).",
+    "DES": "Replace DES with AES-256.",
+    "3DES": "Replace 3DES with AES-256; 3DES is deprecated (NIST SP 800-131A) and slated for removal.",
+    "RC4": "Replace RC4 with ChaCha20 or AES-GCM.",
+    "Blowfish": "Migrate to AES-256 or Twofish; Blowfish's 64-bit block size is vulnerable to birthday-bound attacks (e.g. SWEET32) on large data volumes.",
+    "SHA224": "Consider upgrading to SHA-256 for a larger security margin unless SHA-224's shorter digest is a specific interoperability requirement."
+  },
+  "binary_security_recommendations": {
+    "writable_executable_section": "Enable W^X (write XOR execute) memory protection; no memory region should be simultaneously writable and executable.",
+    "debug_symbols_present": "Strip debug symbols before production release (e.g. `strip --strip-debug`).",
+    "high_entropy": "Investigate the cause of unusually high binary entropy (packing, obfuscation, or embedded encrypted/compressed payloads) before shipping to production.",
+    "missing_symbols": "Verify the binary was stripped intentionally; an unexpectedly fully-stripped binary can also indicate tampering and should be validated against a known-good build.",
+    "suspicious_imports": "Review usage of unsafe/dangerous library functions (e.g. system, strcpy, gets) and replace them with bounds-checked or parameterized alternatives.",
+    "hardcoded_crypto_constants": "If cryptographic keys or secrets are embedded directly in the binary, store them in a secure hardware element (TPM/HSM/Secure Enclave) or an encrypted key store instead.",
+    "weak_compiler_protections": "Recompile with stack-protection enabled (e.g. `-fstack-protector-strong`) and verify the toolchain's default hardening flags are active.",
+    "large_executable_surface": "Consider modularizing the binary to reduce its attack surface, and enable link-time dead-code elimination.",
+    "missing_relocation_protection": "Recompile as a Position-Independent Executable (`-fPIE -pie`) to enable ASLR.",
+    "missing_stack_protection": "Recompile with stack-smashing protection enabled (e.g. `-fstack-protector-strong` / `-fstack-protector-all`)."
+  },
+  "firmware_metadata_recommendations": {
+    "unknown_compiler": "Rebuild with a known, tracked toolchain so the build provenance and available hardening flags can be verified.",
+    "old_compiler": "Upgrade the build toolchain; older compilers may lack modern hardening defaults (stack protectors, PIE-by-default, CFI).",
+    "architecture_mismatch": "Confirm the firmware was built for its intended target architecture; an unexpected or unrecognized architecture value should be investigated before deployment.",
+    "missing_metadata": "Ensure build metadata (compiler identity, architecture, build configuration) is preserved and recorded for future auditability.",
+    "firmware_age": "This firmware build is old; re-evaluate it against currently known vulnerabilities and consider a rebuild against current dependencies."
+  },
+  "deprecated_algorithm_generic_recommendation": "This firmware uses a deprecated cryptographic algorithm; migrate to a currently-recommended alternative (see the algorithm-specific recommendation) as soon as practical."
+}

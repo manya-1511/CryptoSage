@@ -1,0 +1,159 @@
+{
+  "3DES": {
+    "precision": 0.875,
+    "recall": 1.0,
+    "f1-score": 0.9333333333333333,
+    "support": 7.0
+  },
+  "AES": {
+    "precision": 0.9828326180257511,
+    "recall": 0.9541666666666667,
+    "f1-score": 0.9682875264270613,
+    "support": 240.0
+  },
+  "Argon2": {
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1-score": 1.0,
+    "support": 42.0
+  },
+  "Blowfish": {
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1-score": 1.0,
+    "support": 10.0
+  },
+  "Camellia": {
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1-score": 1.0,
+    "support": 7.0
+  },
+  "ChaCha20": {
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1-score": 1.0,
+    "support": 211.0
+  },
+  "DES": {
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1-score": 1.0,
+    "support": 4.0
+  },
+  "ECC": {
+    "precision": 0.981203007518797,
+    "recall": 0.981203007518797,
+    "f1-score": 0.981203007518797,
+    "support": 266.0
+  },
+  "Ed25519": {
+    "precision": 0.7111111111111111,
+    "recall": 0.7619047619047619,
+    "f1-score": 0.735632183908046,
+    "support": 42.0
+  },
+  "HKDF": {
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1-score": 1.0,
+    "support": 7.0
+  },
+  "HMAC": {
+    "precision": 0.9795918367346939,
+    "recall": 1.0,
+    "f1-score": 0.9896907216494846,
+    "support": 48.0
+  },
+  "MD5": {
+    "precision": 1.0,
+    "recall": 0.9130434782608695,
+    "f1-score": 0.9545454545454546,
+    "support": 23.0
+  },
+  "PBKDF2": {
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1-score": 1.0,
+    "support": 4.0
+  },
+  "Poly1305": {
+    "precision": 0.8958333333333334,
+    "recall": 0.8958333333333334,
+    "f1-score": 0.8958333333333334,
+    "support": 48.0
+  },
+  "RC4": {
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1-score": 1.0,
+    "support": 10.0
+  },
+  "RSA": {
+    "precision": 0.9880239520958084,
+    "recall": 0.9705882352941176,
+    "f1-score": 0.9792284866468842,
+    "support": 170.0
+  },
+  "SHA1": {
+    "precision": 0.875,
+    "recall": 0.9130434782608695,
+    "f1-score": 0.8936170212765957,
+    "support": 23.0
+  },
+  "SHA224": {
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1-score": 1.0,
+    "support": 10.0
+  },
+  "SHA256": {
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1-score": 1.0,
+    "support": 55.0
+  },
+  "SHA3": {
+    "precision": 0.8958333333333334,
+    "recall": 0.9148936170212766,
+    "f1-score": 0.9052631578947369,
+    "support": 47.0
+  },
+  "SHA384": {
+    "precision": 0.625,
+    "recall": 0.5,
+    "f1-score": 0.5555555555555556,
+    "support": 10.0
+  },
+  "SHA512": {
+    "precision": 0.8192771084337349,
+    "recall": 0.918918918918919,
+    "f1-score": 0.8662420382165605,
+    "support": 74.0
+  },
+  "Twofish": {
+    "precision": 0.875,
+    "recall": 1.0,
+    "f1-score": 0.9333333333333333,
+    "support": 7.0
+  },
+  "X25519": {
+    "precision": 0.8360655737704918,
+    "recall": 0.796875,
+    "f1-score": 0.816,
+    "support": 64.0
+  },
+  "accuracy": 0.9524142757172848,
+  "macro avg": {
+    "precision": 0.9308238280982106,
+    "recall": 0.9383529373824838,
+    "f1-score": 0.9336568814016323,
+    "support": 1429.0
+  },
+  "weighted avg": {
+    "precision": 0.9535303319975328,
+    "recall": 0.9524142757172848,
+    "f1-score": 0.9525981762428173,
+    "support": 1429.0
+  }
+}

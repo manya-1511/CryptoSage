@@ -1,0 +1,213 @@
+{
+  "categorical_encodings": {
+    "project": {
+      "libsodium": 0,
+      "libtomcrypt": 1,
+      "mbedtls": 2,
+      "openssl": 3,
+      "wolfssl": 4
+    },
+    "architecture": {
+      "x86_64": 0
+    },
+    "optimization_level": {
+      "O0": 0,
+      "O1": 1,
+      "O2": 2,
+      "O3": 3
+    },
+    "compiler": {
+      "clang": 0,
+      "gcc": 1
+    },
+    "compiler_version": {
+      "clang (cached build)": 0,
+      "gcc (cached build)": 1
+    },
+    "build_type": {
+      "debug": 0,
+      "release": 1
+    },
+    "build_system": {
+      "direct_compile": 0
+    },
+    "binary_type": {
+      "object": 0
+    },
+    "crypto_library": {
+      "libsodium": 0,
+      "libtomcrypt": 1,
+      "mbedtls": 2,
+      "openssl": 3,
+      "wolfssl": 4
+    }
+  },
+  "numeric_scaler_params": {
+    "aes_constant_count": {
+      "min": 0.0,
+      "max": 0.0
+    },
+    "arithmetic_count": {
+      "min": 0.0,
+      "max": 3071.0
+    },
+    "basic_block_count_estimate": {
+      "min": 1.0,
+      "max": 1401.0
+    },
+    "binary_size": {
+      "min": 672.0,
+      "max": 808704.0
+    },
+    "blowfish_constant_count": {
+      "min": 0.0,
+      "max": 0.0
+    },
+    "branch_count": {
+      "min": 0.0,
+      "max": 1400.0
+    },
+    "call_count": {
+      "min": 0.0,
+      "max": 1237.0
+    },
+    "call_graph_fanout_estimate": {
+      "min": 0.0,
+      "max": 36.3
+    },
+    "cfg_edge_count_estimate": {
+      "min": 0.0,
+      "max": 1400.0
+    },
+    "chacha20_constant_count": {
+      "min": 0.0,
+      "max": 4.0
+    },
+    "cyclomatic_complexity_estimate": {
+      "min": 1.0,
+      "max": 1.0
+    },
+    "entropy": {
+      "min": 1.623595,
+      "max": 7.227989
+    },
+    "entry_point": {
+      "min": 0.0,
+      "max": 0.0
+    },
+    "executable_section_ratio": {
+      "min": 0.0,
+      "max": 0.0
+    },
+    "export_count": {
+      "min": 0.0,
+      "max": 76.0
+    },
+    "function_count": {
+      "min": 1.0,
+      "max": 214.0
+    },
+    "import_count": {
+      "min": 0.0,
+      "max": 0.0
+    },
+    "import_libraries": {
+      "min": 0.0,
+      "max": 0.0
+    },
+    "instruction_count": {
+      "min": 2.0,
+      "max": 15632.0
+    },
+    "instruction_entropy": {
+      "min": 1.0,
+      "max": 4.683364
+    },
+    "jump_count": {
+      "min": 0.0,
+      "max": 1005.0
+    },
+    "logical_count": {
+      "min": 0.0,
+      "max": 2958.0
+    },
+    "md5_constant_count": {
+      "min": 0.0,
+      "max": 6.0
+    },
+    "memory_count": {
+      "min": 0.0,
+      "max": 9397.0
+    },
+    "opcode_bigram_entropy": {
+      "min": 0.0,
+      "max": 7.133557
+    },
+    "opcode_bigram_unique_ratio": {
+      "min": 0.010641,
+      "max": 1.0
+    },
+    "opcode_trigram_entropy": {
+      "min": 0.0,
+      "max": 8.561134
+    },
+    "opcode_trigram_unique_ratio": {
+      "min": 0.018697,
+      "max": 1.0
+    },
+    "readonly_section_ratio": {
+      "min": 0.0,
+      "max": 0.0
+    },
+    "return_count": {
+      "min": 0.0,
+      "max": 99.0
+    },
+    "section_count": {
+      "min": 7.0,
+      "max": 34.0
+    },
+    "segment_count": {
+      "min": 0.0,
+      "max": 0.0
+    },
+    "sha1_constant_count": {
+      "min": 0.0,
+      "max": 0.0
+    },
+    "sha224_constant_count": {
+      "min": 0.0,
+      "max": 0.0
+    },
+    "sha256_constant_count": {
+      "min": 0.0,
+      "max": 0.0
+    },
+    "sha384_constant_count": {
+      "min": 0.0,
+      "max": 0.0
+    },
+    "sha512_constant_count": {
+      "min": 0.0,
+      "max": 0.0
+    },
+    "string_count": {
+      "min": 8.0,
+      "max": 2551.0
+    },
+    "symbol_count": {
+      "min": 1.0,
+      "max": 214.0
+    },
+    "unique_opcode_ratio": {
+      "min": 0.002404,
+      "max": 1.0
+    },
+    "writable_section_ratio": {
+      "min": 0.0,
+      "max": 0.0
+    }
+  },
+  "train_split_ratio": 0.8,
+  "random_seed": 42
+}
