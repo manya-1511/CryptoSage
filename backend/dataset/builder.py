@@ -1,37 +1,4 @@
-"""
-dataset/builder.py
-
-Phase 2A/2B -- Offline Dataset Builder orchestration.
-
-Drives the full, automated pipeline that turns a list of open-source
-cryptographic libraries (configured in `config.py`) into a labeled
-machine-learning dataset built from *real compiled binaries*, at two
-levels of granularity:
-
-  * **Library-level (Phase 2A):** clone -> detect build system -> build
-    once per optimization level -> discover every ELF executable/shared
-    library produced -> extract features -> one dataset row per binary.
-
-  * **Algorithm-level (Phase 2B):** within each cloned project's source
-    tree, discover individual source files that implement a specific
-    cryptographic algorithm (by filename), and compile *each one* to a
-    standalone object file across every combination of optimization
-    level, build type (debug/release), and available compiler
-    (gcc/clang). Every successfully compiled object file is a real,
-    independent dataset sample with a high-confidence algorithm label
-    (it comes directly from the matched source file, not inferred after
-    the fact). This is what allows the dataset to reach thousands of
-    real samples instead of one row per compiled library.
-
-No step invents data: builds/compiles that fail are logged and skipped,
-and any feature that cannot be extracted is stored as `None`, never a
-fabricated value. A single project, compiler, or source file failing
-never stops the rest of the pipeline.
-
-Run directly:
-
-    python builder.py
-"""
+ 
 
 from __future__ import annotations
 

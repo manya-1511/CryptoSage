@@ -56,6 +56,29 @@ class FirmwareDuplicateResponse(BaseModel):
     status: str = "Already Uploaded"
 
 
+class FirmwareAnalysisResult(BaseModel):
+    """Result summary for a single analyzed binary executable inside a firmware."""
+
+    binary_name: str
+    architecture: Optional[str] = None
+    binary_size: Optional[int] = None
+    feature_count: int
+    feature_vector_path: str
+
+
+class FirmwareAnalysisResponse(BaseModel):
+    """Response returned after completing firmware analysis (Phase 4)."""
+
+    firmware_id: int
+    status: str
+    extraction_success: bool
+    extraction_message: str
+    binaries_discovered: int
+    analyzed_binaries: list[FirmwareAnalysisResult]
+    analysis_time_ms: float
+
+
+
 class AnalysisBase(BaseModel):
     """Fields shared when creating or reading an analysis record."""
 

@@ -1,12 +1,4 @@
-"""
-API route definitions for CryptoSage.
-
-Phase 1 exposes basic informational endpoints. Phase 3 adds the
-firmware upload/listing endpoints. Phase 5B/6 adds the runtime ML
-prediction endpoint. Phase 6/7 adds the risk assessment + recommendation
-endpoint. Future phases will add RAG/report routes here.
-"""
-
+ 
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -18,6 +10,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from analysis.binary import parse_elf
+from analysis.pipeline import run_firmware_analysis
 from config import get_settings
 from database import SessionLocal, get_db
 from input.upload import handle_firmware_upload
@@ -37,6 +30,7 @@ from schemas import Firmware as FirmwareSchema
 from schemas import (
     BinaryPrediction,
     ExplanationResponse,
+    FirmwareAnalysisResponse,
     FirmwareDuplicateResponse,
     FirmwareUploadResponse,
     MultipleExplanations,
@@ -137,6 +131,39 @@ def get_firmware(firmware_id: int, db: Session = Depends(get_db)) -> Firmware:
     return firmware
 
 
+@router.post(
+    "/analyze/{firmware_id}",
+    response_model=FirmwareAnalysisResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Run firmware extraction and static feature analysis",
+)
+@router.post(
+    "/firmware/{firmware_id}/analyze",
+    response_model=FirmwareAnalysisResponse,
+    status_code=status.HTTP_200_OK,
+    include_in_schema=False,
+)
+def analyze_firmware_endpoint(
+    firmware_id: int, db: Session = Depends(get_db)
+) -> FirmwareAnalysisResponse:
+    """Extract a firmware image with Binwalk, discover ELF binaries,
+    extract static features for each discovered binary, save feature vector
+    JSON files for downstream ML prediction/risk/explain endpoints, and store
+    the feature records in the database.
+    """
+    try:
+        return run_firmware_analysis(firmware_id, db)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Unexpected error while analyzing firmware_id=%d", firmware_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An unexpected error occurred while analyzing the firmware.",
+        )
+
+
+
 def _store_prediction(db: Session, firmware_id: int, algorithm: str, confidence: float) -> None:
     """Insert one `analysis` row for a single binary's prediction.
 
@@ -228,7 +255,7 @@ def predict_firmware(
         # vector had an invalid schema) -- a meaningful error, not a
         # silent empty success.
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail={"message": "No valid predictions could be generated.", "failures": failures},
         )
 

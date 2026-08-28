@@ -99,8 +99,8 @@ class Settings:
 
     # Local LLM (Ollama). Never a paid/hosted API.
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-    OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "llama3.1:8b-instruct-q4_0")
-    OLLAMA_TIMEOUT_SECONDS: int = int(os.getenv("OLLAMA_TIMEOUT_SECONDS", "60"))
+    OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "qwen2.5:1.5b")
+    OLLAMA_TIMEOUT_SECONDS: int = int(os.getenv("OLLAMA_TIMEOUT_SECONDS", "180"))
 
     # Maximum accepted upload size, in megabytes. Configurable via
     # MAX_UPLOAD_SIZE_MB so it never needs to be hardcoded in code.

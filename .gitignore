@@ -140,3 +140,4 @@ desktop.ini
  
 *.local
 config.local.*
+.python-version

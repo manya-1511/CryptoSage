@@ -1,28 +1,4 @@
-"""
-dataset/preprocess.py
-
-Phase 2A -- preprocessing step for the offline dataset builder.
-
-Takes the raw `dataset.csv` produced by `builder.py` and prepares it for
-future ML training:
-
-    1. Remove duplicate rows.
-    2. Handle missing values (numeric -> median imputation with a
-       `<column>_was_missing` indicator; categorical -> "UNKNOWN").
-    3. Encode categorical columns using deterministic label encoding
-       (mappings are saved alongside the output so they can be reversed
-       or reused at inference time).
-    4. Normalize numeric feature columns with min-max scaling (scaler
-       parameters are saved alongside the output for the same reason).
-    5. Split into train/test sets (80/20, stratified by `algorithm_label`
-       when every class has enough members, otherwise a plain random
-       split) and write `train.csv` / `test.csv`.
-
-No model is trained here -- this module only prepares data. Scikit-learn
-is intentionally not used (per Phase 2A constraints); the encoding,
-normalization, and splitting are implemented directly with pandas/numpy.
-"""
-
+ 
 from __future__ import annotations
 
 import json

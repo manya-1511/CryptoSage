@@ -12,7 +12,13 @@ statistics, per the Phase 4 scope.
 """
 
 from __future__ import annotations
-
+from capstone import (
+    Cs,
+    CS_ARCH_X86,
+    CS_MODE_16,
+    CS_MODE_32,
+    CS_MODE_64,
+)
 import logging
 from typing import Any, Optional
 

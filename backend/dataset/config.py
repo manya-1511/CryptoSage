@@ -1,16 +1,4 @@
-"""
-dataset/config.py
-
-Central configuration for the Phase 2A offline dataset builder pipeline.
-
-Every value that could change between environments or research runs
-(which projects to build, which optimization levels, which compilers,
-which architectures, which crypto signatures to look for) lives here.
-`builder.py`, `extractor.py`, and `preprocess.py` read from this module
-instead of hardcoding paths, URLs, or build commands, so that adding a
-new project, compiler, optimization level, or architecture in the
-future is a configuration change, not a code change.
-"""
+ 
 
 from __future__ import annotations
 

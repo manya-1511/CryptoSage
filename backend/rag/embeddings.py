@@ -120,7 +120,7 @@ class TfidfEmbeddingFunction(EmbeddingFunction):
         return "tfidf-fallback"
 
 
-def _try_load_sentence_transformer(model_name: str, timeout_seconds: int = 15) -> Optional[Any]:
+def _try_load_sentence_transformer(model_name: str, timeout_seconds: int = 60) -> Optional[Any]:
     """Attempt to load the configured sentence-transformers model.
 
     Runs the load in a background daemon thread with a hard wall-clock

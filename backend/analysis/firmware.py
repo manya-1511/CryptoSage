@@ -112,8 +112,11 @@ def extract_firmware(
         try:
             result = subprocess.run(
                 [
-                    "binwalk", "--extract", "--directory", str(output_dir),
-                    "--run-as=root", str(firmware_path),
+                    "binwalk",
+                     "--extract", 
+                     "--directory", 
+                     str(output_dir),
+                    str(firmware_path),
                 ],
                 capture_output=True,
                 text=True,
