@@ -4,6 +4,8 @@
 
 CryptoSage analyzes firmware binaries to detect cryptographic algorithms, assess security risks, generate recommendations, and provide evidence-backed explanations using RAG.
 
+---
+
 ## Features
 
 * Firmware upload and validation (`.bin`, `.img`, `.elf`)
@@ -18,12 +20,15 @@ CryptoSage analyzes firmware binaries to detect cryptographic algorithms, assess
 * Security risk scoring
 * Automated security recommendations
 * RAG-based security explanations
-* REST API using **FastAPI**
+* FastAPI REST API
 * PostgreSQL database
+* Next.js frontend dashboard
+
+---
 
 ## ML Performance
 
-The model was trained on **7,095 real compiled samples** covering **24 cryptographic algorithms** across **6 families**.
+The model is trained on **7,095 real compiled samples**, covering **24 cryptographic algorithms** across **6 families**.
 
 | Metric             |      Score |
 | ------------------ | ---------: |
@@ -34,70 +39,54 @@ The model was trained on **7,095 real compiled samples** covering **24 cryptogra
 
 **Best Model:** `ExtraTreesClassifier`
 
+---
+
 ## Architecture
 
 ```text
 Firmware
-   ↓
+    ↓
 Upload & Validation
-   ↓
+    ↓
 Binwalk Extraction
-   ↓
+    ↓
 Executable Discovery
-   ↓
+    ↓
 LIEF + Capstone Analysis
-   ↓
+    ↓
 Feature Extraction
-   ↓
+    ↓
 ML Classification
-   ↓
+    ↓
 Risk Assessment
-   ↓
-Security Recommendations
-   ↓
-RAG-Based Explanation
+    ↓
+Recommendations
+    ↓
+RAG Explanation
+    ↓
+Frontend Dashboard
 ```
+
+---
 
 ## Tech Stack
 
-| Layer            | Technologies                             |
-| ---------------- | ---------------------------------------- |
-| Language         | Python 3.12                              |
-| Backend          | FastAPI                                  |
-| Database         | PostgreSQL                               |
-| ORM              | SQLAlchemy                               |
-| Migrations       | Alembic                                  |
-| Binary Analysis  | Binwalk, LIEF, Capstone                  |
-| Machine Learning | Scikit-learn, XGBoost                    |
-| Explainability   | SHAP                                     |
-| RAG              | LangChain, ChromaDB                      |
-| Embeddings       | Sentence Transformers                    |
-| LLM              | Ollama                                   |
-| Frontend         | Next.js, React, TypeScript, Tailwind CSS |
+| Layer           | Technologies                             |
+| --------------- | ---------------------------------------- |
+| Language        | Python 3.12                              |
+| Backend         | FastAPI                                  |
+| Database        | PostgreSQL                               |
+| ORM             | SQLAlchemy                               |
+| Migrations      | Alembic                                  |
+| Binary Analysis | Binwalk, LIEF, Capstone                  |
+| ML              | Scikit-learn, XGBoost                    |
+| Explainability  | SHAP                                     |
+| RAG             | LangChain, ChromaDB                      |
+| Embeddings      | Sentence Transformers                    |
+| LLM             | Ollama                                   |
+| Frontend        | Next.js, React, TypeScript, Tailwind CSS |
 
-## Project Structure
-
-```text
-CryptoSage/
-│
-├── backend/
-│   ├── api/
-│   ├── input/
-│   ├── analysis/
-│   ├── dataset/
-│   ├── ml/
-│   ├── rag/
-│   ├── reports/
-│   ├── app.py
-│   ├── config.py
-│   ├── database.py
-│   ├── models.py
-│   └── schemas.py
-│
-├── frontend/
-│
-└── README.md
-```
+---
 
 # Installation
 
@@ -107,6 +96,10 @@ CryptoSage/
 git clone https://github.com/manya-1511/CryptoSage.git
 cd CryptoSage
 ```
+
+---
+
+# Backend Setup
 
 ## 2. Create Virtual Environment
 
@@ -121,15 +114,9 @@ source venv/bin/activate
 pip install -r backend/requirements.txt
 ```
 
-## 4. Configure PostgreSQL
+## 4. Configure Environment
 
-Create a PostgreSQL database named:
-
-```text
-cryptosage
-```
-
-Create a `.env` file inside `backend/`:
+Create `backend/.env`:
 
 ```env
 DATABASE_URL=postgresql://postgres:password@localhost:5432/cryptosage
@@ -141,41 +128,220 @@ OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_MODEL=llama3.1:8b-instruct-q4_0
 ```
 
-Update the database credentials according to your PostgreSQL setup.
+Update the PostgreSQL credentials according to your setup.
 
-# Run the Backend
+## 5. Run Backend
 
 ```bash
 cd backend
 uvicorn app:app --reload
 ```
 
-API:
+Backend:
 
 ```text
-http://127.0.0.1:8000
+http://localhost:8000
 ```
 
-Swagger documentation:
+Swagger API:
 
 ```text
-http://127.0.0.1:8000/docs
+http://localhost:8000/docs
 ```
 
-# Build Dataset
+---
 
-The dataset builder uses cryptographic libraries such as OpenSSL, mbedTLS, wolfSSL, LibTomCrypt, and libsodium.
+# Frontend Setup
+
+The CryptoSage Console is the frontend dashboard for interacting with the current firmware-centric backend.
+
+## 6. Install Frontend Dependencies
+
+Open a new terminal:
+
+```bash
+cd frontend
+npm install
+```
+
+## 7. Configure Frontend
+
+Copy the example environment file:
+
+```bash
+cp .env.example .env
+```
+
+The frontend expects the backend at:
+
+```text
+http://localhost:8000
+```
+
+Update `.env` if your backend runs on a different URL.
+
+## 8. Run Frontend
+
+```bash
+npm run dev
+```
+
+Frontend:
+
+```text
+http://localhost:3000
+```
+
+The backend must be running on port `8000`.
+
+---
+
+# Frontend Features
+
+### Firmware Management
+
+* Upload `.bin`, `.img`, and `.elf` firmware
+* Real-time upload progress
+* SHA-256 duplicate detection
+* View all uploaded firmware
+* Select firmware from the sidebar
+* View firmware metadata and hash
+
+### Analysis
+
+The dashboard provides three independent actions:
+
+| Action               | Endpoint             |
+| -------------------- | -------------------- |
+| Run Prediction       | `POST /predict/{id}` |
+| Assess Risk          | `POST /risk/{id}`    |
+| Generate Explanation | `POST /explain/{id}` |
+
+### Prediction
+
+Displays:
+
+* Cryptographic family
+* Detected algorithm
+* Confidence score
+* Model and model version
+* Results for each discovered binary
+
+### Risk Assessment
+
+Displays:
+
+* Risk score
+* Risk level
+* Risk factors
+* Security recommendations
+
+Risk levels:
+
+```text
+0–20    Safe
+21–40   Low
+41–60   Medium
+61–80   High
+81–100  Critical
+```
+
+### RAG Explanation
+
+Displays:
+
+* Security summary
+* Explanation sections
+* Referenced standards
+* Citations
+* Generation method
+
+The UI also shows whether the explanation was generated by:
+
+```text
+ollama:<model>
+```
+
+or:
+
+```text
+template_fallback
+```
+
+---
+
+# Important: Phase 4 Analysis
+
+The current frontend **cannot directly trigger Phase 4 firmware analysis**.
+
+Before prediction, risk assessment, or explanation, the firmware must already have a generated:
+
+```text
+feature_vector.json
+```
+
+under:
+
+```text
+ANALYSIS_OUTPUT_DIR/<firmware_id>/
+```
+
+The current backend does not expose a firmware analysis endpoint.
+
+Therefore, the current workflow is:
+
+```text
+Upload Firmware
+      ↓
+Run Phase 4 Analysis
+      ↓
+Generate feature_vector.json
+      ↓
+Run Prediction / Risk / Explanation
+```
+
+If `/predict`, `/risk`, or `/explain` returns a `404` indicating that analysis results are missing, the frontend is behaving correctly.
+
+---
+
+# API Endpoints
+
+| Method | Endpoint           | Description       |
+| ------ | ------------------ | ----------------- |
+| `GET`  | `/health`          | Backend health    |
+| `POST` | `/firmware/upload` | Upload firmware   |
+| `GET`  | `/firmware`        | List firmware     |
+| `GET`  | `/firmware/{id}`   | Firmware metadata |
+| `POST` | `/predict/{id}`    | ML prediction     |
+| `POST` | `/risk/{id}`       | Risk assessment   |
+| `POST` | `/explain/{id}`    | RAG explanation   |
+
+---
+
+# Dataset
+
+CryptoSage generates training data from:
+
+* OpenSSL
+* mbedTLS
+* wolfSSL
+* LibTomCrypt
+* libsodium
+
+Build the dataset:
 
 ```bash
 cd backend/dataset
 python builder.py
 ```
 
-Preprocess the dataset:
+Preprocess:
 
 ```bash
 python preprocess.py
 ```
+
+---
 
 # Train ML Model
 
@@ -184,63 +350,70 @@ cd backend/ml
 python train.py
 ```
 
-Trained models are stored in:
+Models are stored in:
 
 ```text
 backend/ml/saved_models/
 ```
 
-# API Endpoints
+---
 
-| Method | Endpoint                 | Description                     |
-| ------ | ------------------------ | ------------------------------- |
-| `POST` | `/firmware/upload`       | Upload firmware                 |
-| `GET`  | `/firmware`              | List firmware                   |
-| `GET`  | `/firmware/{id}`         | Get firmware details            |
-| `POST` | `/predict/{firmware_id}` | Predict cryptographic algorithm |
-| `POST` | `/risk/{firmware_id}`    | Calculate security risk         |
-| `POST` | `/explain/{firmware_id}` | Generate RAG explanation        |
+# Production Build
 
-# Analysis Pipeline
+From the `frontend/` directory:
 
-```text
-Upload Firmware
-      ↓
-Validate & Store
-      ↓
-Binwalk Extraction
-      ↓
-Executable Discovery
-      ↓
-ELF Parsing
-      ↓
-Disassembly
-      ↓
-Feature Extraction
-      ↓
-ML Prediction
-      ↓
-Risk Assessment
-      ↓
-Recommendations
-      ↓
-RAG Explanation
+```bash
+npm run build
 ```
 
-# RAG Intelligence
+The production build is generated in:
 
-CryptoSage uses a security knowledge base containing references from:
+```text
+dist/
+```
 
-* NIST
-* MITRE
-* OWASP
-* CISA
-* RFCs
-* Academic research
+Preview the production build:
 
-The RAG engine retrieves relevant security knowledge and explains the results produced by the ML and risk engines.
+```bash
+npm run preview
+```
 
-# Project Status
+Frontend preview:
+
+```text
+http://localhost:3000
+```
+
+---
+
+# Complete Development Workflow
+
+### Terminal 1 — Backend
+
+```bash
+cd CryptoSage
+source venv/bin/activate
+cd backend
+uvicorn app:app --reload
+```
+
+### Terminal 2 — Frontend
+
+```bash
+cd CryptoSage/frontend
+npm install
+npm run dev
+```
+
+Open:
+
+```text
+http://localhost:3000
+```
+
+---
+
+## Project Status
 
 ### Implemented
 
@@ -255,12 +428,16 @@ The RAG engine retrieves relevant security knowledge and explains the results pr
 * Risk assessment
 * Security recommendations
 * RAG-based explanations
+* Frontend dashboard
 
 ### Future Work
 
-* Frontend integration
+* Frontend-triggered Phase 4 analysis endpoint
 * PDF security reports
 * Production deployment
+* Advanced firmware visualization
+
+---
 
 ## License
 
