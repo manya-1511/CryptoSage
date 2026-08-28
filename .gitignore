@@ -55,7 +55,7 @@ backend/dataset/compiled/
 backend/dataset/logs/
  
 backend/ml/reports/
- 
+backend/paper_figures/
 *.joblib
 *.pkl
  
@@ -109,8 +109,7 @@ build/
 *.tsbuildinfo
 
 # Frontend environment files
-
-frontend/ 
+ 
 frontend/.env.local
 frontend/.env.*.local
  
