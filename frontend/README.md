@@ -1,187 +1,483 @@
-# 🛡️ CryptoSage — Firmware Cryptographic Security Analysis Platform (Frontend)
+# 🛡️ CryptoSage
 
-An AI-powered frontend for CryptoSage: upload firmware, detect the
-cryptographic algorithms inside it, get a weighted security risk score,
-and receive an evidence-backed, cited explanation of the findings.
+### AI-Powered Firmware Cryptographic Security Analysis Platform
 
-This is the **frontend only**. It talks to your existing CryptoSage
-FastAPI backend (the one with `/firmware/upload`, `/analyze`, `/predict`,
-`/risk`, `/explain`, etc.) — it does not include or require its own
-database; all persistent state lives in the backend's PostgreSQL.
+CryptoSage is an AI-powered firmware security analysis platform designed to inspect firmware images, detect cryptographic algorithms through static binary analysis and machine learning, assess security risk, and generate evidence-backed recommendations and explanations.
+
+The platform combines a **FastAPI backend**, **machine-learning pipeline**, **deterministic risk engine**, **RAG-based explanation engine**, and a **Next.js frontend** into a single end-to-end security analysis workflow.
 
 ---
 
-## ✨ Features
+## ✨ Key Features
 
-- **Landing page** with product overview and sign-up
-- **Clerk authentication** (sign-in/sign-up, protected routes)
-- **Dashboard** with quick actions
-- **Analyze** — drag-and-drop firmware upload that runs the full
-  upload → extract → predict → risk-score → explain pipeline, with
-  live progress and a results view
-- **Firmware History** — every uploaded firmware, with a detail page
-  per firmware that re-fetches or re-runs its report
-- **Report Assistant** — a lightweight AI-style chat that answers
-  questions grounded entirely in a specific firmware's own report
-  (algorithm, risk score, recommendations, references). It does not
-  call an LLM — the backend has no chat endpoint — so it stays
-  strictly accurate to what CryptoSage actually found rather than
-  fabricating a "live AI" that isn't there.
-- **Violet/purple design system** — glass cards, animated neon grid
-  background, floating particles, dark mode by default
+* 🔐 Firmware upload and validation for `.bin`, `.img`, and `.elf`
+* 🔍 Static binary analysis using **Binwalk, LIEF, and Capstone**
+* 🧠 Hierarchical ML classification:
 
----
-
-## 🛠️ Tech Stack
-
-| Layer | Technology |
-|---|---|
-| Framework | Next.js 14 (App Router) |
-| Language | TypeScript |
-| Styling | Tailwind CSS v4 |
-| Auth | Clerk |
-| Animation | Framer Motion |
-| Icons | lucide-react |
-| HTTP client | axios |
-| Backend | Your existing CryptoSage FastAPI service |
-
-No frontend database. No Vapi, no mfapi.in, no Drizzle/Neon — those
-were specific to a prior, unrelated app and have been fully removed.
+  * Cryptographic family detection
+  * Specific algorithm detection
+* 📊 Research-grade ML benchmarking with multiple classifiers
+* 🎯 **95.24% algorithm-level accuracy**
+* 🛡️ Deterministic weighted security risk scoring
+* ⚠️ Risk levels: **Safe, Low, Medium, High, Critical**
+* 💡 Rule-based security recommendations
+* 🔎 SHAP-based ML explainability
+* 📚 RAG-based evidence-backed explanations
+* 🤖 Local Ollama LLM integration with deterministic fallback
+* 🗂️ Firmware history and detailed analysis pages
+* 💬 Report Assistant grounded in the firmware's analysis report
+* 🔑 Clerk authentication and protected frontend routes
+* 📈 Modern dark-themed dashboard with responsive UI
+* 🐳 Docker support
 
 ---
 
-## 🚀 Getting Started (local dev)
+# 🏗️ System Architecture
 
-### Prerequisites
-- Node.js 18+
-- npm
-- A [Clerk](https://clerk.com) application
-- The CryptoSage FastAPI backend running and reachable (default assumed
-  at `http://localhost:8000`)
+CryptoSage consists of four major layers:
 
-### 1. Install dependencies
+```text
+                    ┌─────────────────────────┐
+                    │       Next.js UI        │
+                    │  Dashboard / Analysis   │
+                    │ History / Reports / Auth│
+                    └────────────┬────────────┘
+                                 │
+                                 ▼
+                    ┌─────────────────────────┐
+                    │      FastAPI Backend     │
+                    │       REST API Layer     │
+                    └────────────┬────────────┘
+                                 │
+              ┌──────────────────┼──────────────────┐
+              │                  │                  │
+              ▼                  ▼                  ▼
+       Firmware Input      Static Analysis       PostgreSQL
+       Upload/Validation   Binwalk/LIEF/Capstone  Persistence
+              │                  │
+              └────────────┬─────┘
+                           ▼
+                  ┌───────────────────┐
+                  │ ML Classification │
+                  │ Family → Algorithm│
+                  └─────────┬─────────┘
+                            │
+                            ▼
+                  ┌───────────────────┐
+                  │  Risk Assessment  │
+                  │ + Recommendations │
+                  └─────────┬─────────┘
+                            │
+                            ▼
+                  ┌───────────────────┐
+                  │ RAG Explanation   │
+                  │ ChromaDB + LLM    │
+                  └───────────────────┘
+```
+
+---
+
+# 🧰 Tech Stack
+
+## Backend
+
+| Layer             | Technology             |
+| ----------------- | ---------------------- |
+| Language          | Python 3.12            |
+| API               | FastAPI                |
+| Database          | PostgreSQL             |
+| ORM               | SQLAlchemy 2.0         |
+| Migrations        | Alembic                |
+| Validation        | Pydantic               |
+| Server            | Uvicorn                |
+| Binary Extraction | Binwalk                |
+| Binary Parsing    | LIEF                   |
+| Disassembly       | Capstone               |
+| ML                | Scikit-learn, XGBoost  |
+| Explainability    | SHAP                   |
+| RAG               | LangChain              |
+| Vector Database   | ChromaDB               |
+| Embeddings        | BAAI/bge-small-en-v1.5 |
+| Local LLM         | Ollama                 |
+
+## Frontend
+
+| Layer          | Technology    |
+| -------------- | ------------- |
+| Framework      | Next.js 14    |
+| Language       | TypeScript    |
+| Styling        | Tailwind CSS  |
+| Authentication | Clerk         |
+| Animation      | Framer Motion |
+| Icons          | lucide-react  |
+| HTTP Client    | Axios         |
+| Architecture   | App Router    |
+
+---
+
+# 🧪 Dataset
+
+CryptoSage contains a reproducible offline dataset-generation pipeline built from open-source cryptographic libraries:
+
+* OpenSSL
+* mbedTLS
+* wolfSSL
+* LibTomCrypt
+* libsodium
+
+The algorithm-level pipeline compiles individual cryptographic source files across:
+
+* GCC / Clang
+* O0 / O1 / O2 / O3
+* Debug / Release configurations
+
+The current dataset contains:
+
+**7,095 real compiled samples across 24 algorithm labels.**
+
+---
+
+# 🧠 Machine Learning Pipeline
+
+CryptoSage uses a hierarchical classification strategy:
+
+```text
+                    Firmware Binary
+                          │
+                          ▼
+                  Feature Extraction
+                          │
+                          ▼
+                ┌───────────────────┐
+                │ Stage 1           │
+                │ Crypto Family     │
+                └─────────┬─────────┘
+                          │
+                          ▼
+                ┌───────────────────┐
+                │ Stage 2           │
+                │ Specific Algorithm│
+                └───────────────────┘
+```
+
+Four models are benchmarked:
+
+* Random Forest
+* Extra Trees
+* XGBoost
+* HistGradientBoosting
+
+The benchmark uses **Stratified 5-Fold Cross-Validation** and automatically selects the best model based primarily on macro F1.
+
+The current benchmark selected **ExtraTreesClassifier**.
+
+---
+
+# 📊 ML Results
+
+Evaluation was performed on a held-out test set containing:
+
+* **5,666 training samples**
+* **1,429 test samples**
+* **24 algorithm classes**
+* **6 cryptographic families**
+
+| Metric                      |     Result |
+| --------------------------- | ---------: |
+| Algorithm Accuracy          | **95.24%** |
+| Algorithm Macro F1          | **93.37%** |
+| Algorithm Balanced Accuracy | **93.84%** |
+| Family Accuracy             | **98.25%** |
+| Family Macro F1             | **98.08%** |
+| Cross-Validation Macro F1   | **≈96.9%** |
+
+The reported test results come from a final evaluation on the held-out test set after model selection.
+
+---
+
+# 🔍 Explainable AI
+
+CryptoSage uses SHAP to explain model predictions.
+
+The system provides:
+
+* Global feature importance
+* SHAP summary
+* Feature contribution analysis
+* Per-prediction explanations
+
+Current high-ranking binary-content features include:
+
+```text
+chacha_symbol
+aes_symbol
+ecc_symbol
+rsa_symbol
+entropy_normalized
+```
+
+The explainability pipeline is designed to use binary-content signals rather than dataset provenance features.
+
+---
+
+# 🛡️ Risk Assessment
+
+Risk assessment is **deterministic and non-ML**.
+
+```text
+Risk Score =
+Σ(category weight × normalized factor)
+```
+
+The score is bounded between `0` and `100`.
+
+### Risk Levels
+
+|  Score | Level    |
+| -----: | -------- |
+|   0–20 | Safe     |
+|  21–40 | Low      |
+|  41–60 | Medium   |
+|  61–80 | High     |
+| 81–100 | Critical |
+
+The risk engine uses configured weights and rules rather than an additional ML or LLM model.
+
+---
+
+# 📚 RAG Explanation Engine
+
+CryptoSage provides evidence-backed explanations using Retrieval-Augmented Generation.
+
+```text
+Analysis Result
+      ↓
+Retrieve relevant security knowledge
+      ↓
+ChromaDB
+      ↓
+Relevant documents
+      ↓
+Ollama local LLM
+      ↓
+Grounded explanation
+      ↓
+Recommendations + references
+```
+
+The knowledge base is designed around security standards and references such as:
+
+* NIST
+* MITRE CWE / ATT&CK
+* OWASP IoT
+* CISA advisories
+* Relevant RFCs
+
+When the local LLM is unavailable, the backend can fall back to a deterministic template-based explanation.
+
+---
+
+# 🚀 Getting Started
+
+## 1. Clone the repository
+
+```bash
+git clone https://github.com/manya-1511/CryptoSage.git
+cd CryptoSage
+```
+
+---
+
+# ⚙️ Backend Setup
+
+```bash
+cd backend
+```
+
+Create and activate a Python environment:
+
+```bash
+python3.12 -m venv venv
+source venv/bin/activate
+```
+
+Install dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+Configure environment variables:
+
+```bash
+cp .env.example .env
+```
+
+Configure your PostgreSQL connection and other required backend settings in `.env`.
+
+Run database migrations:
+
+```bash
+alembic upgrade head
+```
+
+Start FastAPI:
+
+```bash
+uvicorn app:app --reload
+```
+
+Backend:
+
+```text
+http://localhost:8000
+```
+
+API documentation:
+
+```text
+http://localhost:8000/docs
+```
+
+---
+
+# 🎨 Frontend Setup
+
+Open another terminal:
+
+```bash
+cd frontend
+```
+
+Install dependencies:
 
 ```bash
 npm install
 ```
 
-### 2. Configure environment variables
-
-Copy `.env.example` to `.env.local` and fill in your real values:
+Create the environment file:
 
 ```bash
 cp .env.example .env.local
 ```
 
+Configure:
+
 ```env
-NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_your_clerk_publishable_key
-CLERK_SECRET_KEY=sk_test_your_clerk_secret_key
+NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_your_key
+CLERK_SECRET_KEY=sk_test_your_key
+
 NEXT_PUBLIC_CLERK_SIGN_IN_URL=/sign-in
 NEXT_PUBLIC_CLERK_SIGN_UP_URL=/sign-up
 NEXT_PUBLIC_CLERK_AFTER_SIGN_IN_URL=/dashboard
 NEXT_PUBLIC_CLERK_AFTER_SIGN_UP_URL=/dashboard
 
-# Server-side only (used by app/api/* proxy routes) — never exposed to the browser
 API_URL=http://localhost:8000
-# Client-side (used by lib/api.ts calling the backend directly)
 NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
 ```
 
-`.env.local` is already in `.gitignore` — never commit real secrets.
-
-### 3. Run the dev server
+Start the frontend:
 
 ```bash
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000). Make sure your
-CryptoSage FastAPI backend is running separately (see its own README)
-on whatever `NEXT_PUBLIC_API_BASE_URL` points to.
+Frontend:
 
-### 4. Build for production (optional local check)
-
-```bash
-npm run build
-npm start
+```text
+http://localhost:3000
 ```
 
 ---
 
-## 🐳 Running with Docker
+# 🐳 Docker
 
-### Build the image
+The project includes Docker support for the frontend and backend infrastructure.
 
-Build-time public env vars (safe to be visible in the browser bundle)
-are passed as build args; the secret key is **not** — it's only ever
-passed at `docker run` time.
+Frontend build:
 
 ```bash
+cd frontend
+
 docker build \
   --build-arg NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_your_key \
-  --build-arg NEXT_PUBLIC_API_BASE_URL=https://your-backend.example.com \
+  --build-arg NEXT_PUBLIC_API_BASE_URL=http://localhost:8000 \
   -t cryptosage-frontend .
 ```
 
-### Run the container
+Run:
 
 ```bash
 docker run -p 3000:3000 \
-  -e CLERK_SECRET_KEY=sk_test_your_secret_key \
-  -e API_URL=https://your-backend.example.com \
-  -e NEXT_PUBLIC_API_BASE_URL=https://your-backend.example.com \
+  -e CLERK_SECRET_KEY=your_secret_key \
+  -e API_URL=http://localhost:8000 \
+  -e NEXT_PUBLIC_API_BASE_URL=http://localhost:8000 \
   cryptosage-frontend
 ```
 
-Open [http://localhost:3000](http://localhost:3000).
+---
 
-### Or with docker-compose
+# 🧪 Dataset Generation
 
-Create a `.env` file (compose reads this automatically) with the same
-variables shown in `.env.example`, then:
+To generate the dataset:
 
 ```bash
-docker compose up --build
+cd backend/dataset
+python builder.py
 ```
 
-`docker-compose.yml` assumes your FastAPI backend is either:
-- reachable at a URL you set in `API_URL` / `NEXT_PUBLIC_API_BASE_URL`, or
-- running as its own `backend` service on the same Docker network (edit
-  `API_URL` to `http://backend:8000` and add that service yourself if
-  you want to run both containers together — this repo only contains
-  the frontend).
+Then preprocess:
+
+```bash
+python preprocess.py
+```
+
+The pipeline generates training and test data from compiled cryptographic implementations.
 
 ---
 
-## 🔐 Auth & route protection
+# 🤖 Model Training
 
-`middleware.ts` protects `/dashboard`, `/analyze`, and `/firmware` —
-signed-out users are redirected to sign in before reaching them. The
-landing page (`/`) redirects signed-in users straight to `/dashboard`.
+```bash
+cd backend/ml
+python train.py
+```
 
----
+### Future Work
 
-## 🔌 Backend endpoints this frontend expects
-
-All defined and typed in `lib/api.ts`, matching your FastAPI router:
-
-| Method | Endpoint | Used by |
-|---|---|---|
-| POST | `/firmware/upload` | Analyze page |
-| GET | `/firmware` | Firmware History, Report Assistant |
-| GET | `/firmware/{id}` | Firmware detail page |
-| POST | `/firmware/{id}/analyze` | Analyze page, Firmware detail, Report Assistant |
-| POST | `/predict/{id}` | available in `lib/api.ts`, not currently called directly (superseded by `/explain`) |
-| POST | `/risk/{id}` | available in `lib/api.ts`, not currently called directly (superseded by `/explain`) |
-| POST | `/explain/{id}` | Analyze page, Firmware detail, Report Assistant |
-| GET | `/health` | `app/api/health` proxy |
-
-If any response shape differs from what's in `lib/api.ts` (this was
-built against your `routes.py` but not your `schemas.py`), that file
-is the one place to correct field names.
+* [ ] PDF security report generation
+* [ ] Expanded firmware architecture support
+* [ ] Additional cryptographic algorithms
+* [ ] ARM / ARM64 / MIPS cross-architecture dataset expansion
+* [ ] More advanced binary-level security analysis
+* [ ] Production deployment and monitoring
 
 ---
 
-## 📜 License
+# 🎓 Research Highlights
+
+CryptoSage focuses on the combination of:
+
+```text
+Static Binary Analysis
+        +
+Machine Learning
+        +
+Explainable AI
+        +
+Deterministic Risk Assessment
+        +
+Retrieval-Augmented Generation
+```
+
+A key design principle is keeping **training, runtime analysis, risk scoring, and explanations independently traceable**, rather than relying on an opaque end-to-end prediction system.
+
+The current research dataset contains **7,095 real compiled samples across 24 cryptographic algorithms**, while the hierarchical classifier achieved **95.24% held-out algorithm accuracy** and **98.25% family-level accuracy**.
+
+---
+
+# 📜 License
 
 This project is developed for research and educational purposes.
+
+---
