@@ -1,142 +1,89 @@
-  
-**pycache**/
+# =========================
+# Python
+# =========================
+__pycache__/
 *.py[cod]
-*$py.class
-*.so
- 
+*.pyo
+*.pyd
+.ipynb_checkpoints/
+
+# Virtual environments
 venv/
 .venv/
 env/
-ENV/
-  venv/
-backend/.venv/
- 
-*.egg
-*.egg-info/
-dist/
-build/
-.eggs/
- 
-backend/.env
+
+# Environment variables
+.env
 .env.*
 !.env.example
- 
+
+# =========================
+# Logs / temporary files
+# =========================
+*.log
+logs/
+backend/logs/
+backend/ml/logs/
+
+# =========================
+# Analysis output
+# =========================
+backend/analysis_output/
+backend/uploads/
+backend/reports/
+
+# =========================
+# Dataset generated files
+# =========================
+backend/dataset/compiled/
+backend/dataset/logs/
+backend/dataset/data/processed/
+
+# =========================
+# ML generated artifacts
+# =========================
+backend/ml/saved_models/
+backend/ml/reports/
+
+# =========================
+# RAG / Vector database
+# =========================
+backend/rag/chroma_store/
+
+# =========================
+# Generated paper figures
+# =========================
+backend/paper_figures/
+
+# =========================
+# Jupyter
+# =========================
+*.ipynb_checkpoints/
+
+# =========================
+# Frontend / Node
+# =========================
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/dist/
+frontend/build/
+
+# Frontend environment files
+frontend/.env
+frontend/.env.local
+frontend/.env.*.local
+
+# =========================
+# OS files
+# =========================
+.DS_Store
+Thumbs.db
+
+# =========================
+# IDE
+# =========================
 .vscode/
 .idea/
 *.swp
 *.swo
-*~
-.DS_Store
- 
-.ipynb_checkpoints/
- 
-*.log
-logs/
-backend/logs/
-backend/dataset/logs/
- 
-*.sql
-*.sqlite
-*.sqlite3
-*.db
- 
-uploads/
-backend/uploads/
- 
-analysis_output/
-backend/analysis_output/
- 
-extracted/
-tmp/
-temp/
-  
-backend/dataset/sources/
-backend/dataset/compiled/
-backend/dataset/logs/
- 
-backend/ml/reports/
-backend/paper_figures/
-*.joblib
-*.pkl
- 
-backend/ml/**pycache**/
-backend/ml/.cache/
-backend/ml/cache/
- 
-chroma_db/
-chromadb/
-backend/rag/chroma_db/
-backend/rag/chromadb/
- 
-backend/rag/.cache/
-backend/rag/cache/
- 
-.cache/
-.cache/huggingface/
-huggingface_cache/
- 
-ollama/
-backend/ollama/
- 
-reports/generated_reports/
-backend/reports/generated_reports/
-
-*.pdf
- 
-*_feature_vector.json
-
- 
-.coverage
-.coverage.*
-htmlcov/
-.pytest_cache/
-.tox/
-.nox/
-coverage.xml
-*.cover
-  
-.mypy_cache/
-.pyright/
-.pyre/
- 
-.ruff_cache/
- 
-node_modules/
-.next/
-out/
-dist/
-build/
-*.tsbuildinfo
-
-# Frontend environment files
- 
-frontend/.env.local
-frontend/.env.*.local
- 
-.DS_Store
-Thumbs.db
-desktop.ini
- 
-*.zip
-*.tar
-*.tar.gz
-*.tgz
-*.7z
-*.rar
- 
-*.bin
-*.img
-*.elf
-*.o
-*.so
-*.a
- 
-*.tmp
-*.temp
-*.bak
-*.old
-*.orig
- 
-*.local
-config.local.*
-.python-version

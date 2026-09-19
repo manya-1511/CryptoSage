@@ -1,0 +1,18 @@
+# Convenience compose file for local/self-hosted deployment.
+# Assumes the CryptoSage FastAPI backend runs as its own service
+# (in this repo or elsewhere) reachable at the API_URL below.
+services:
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY}
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
+    ports:
+      - "3000:3000"
+    environment:
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY}
+      API_URL: ${API_URL:-http://backend:8000}
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8000}
+    restart: unless-stopped
