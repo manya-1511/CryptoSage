@@ -1,77 +1,140 @@
 "use client";
 
 import { Card } from "@/components/ui/card";
-import { CheckCircle2Icon, ShieldAlertIcon, BookOpenIcon } from "lucide-react";
+import {
+  CheckCircle2Icon,
+  ShieldAlertIcon,
+  BookOpenIcon,
+} from "lucide-react";
 import { riskColorClasses } from "@/lib/utils";
 import type { ExplanationResponse } from "@/lib/api";
 
 /**
  * Renders a single binary's full result: detected algorithm, risk score,
  * and the RAG-generated explanation with recommendations + references.
+ *
  * Shared between the live analysis flow (FirmwareUploadWidget) and the
  * firmware detail/history view (FirmwareReport) so both stay in sync.
  */
-export default function ReportCard({ result }: { result: ExplanationResponse }) {
+export default function ReportCard({
+  result,
+}: {
+  result: ExplanationResponse;
+}) {
   const riskBorder =
-    riskColorClasses(result.risk_level).split(" ").find((c) => c.startsWith("border")) ||
+    riskColorClasses(result.risk_level)
+      .split(" ")
+      .find((c) => c.startsWith("border")) ||
     "border-violet-500/30";
+
+  // Handle both possible API formats:
+  // 0.5668 -> 56.68%
+  // 56.68  -> 56.68%
+  //
+  // Clamp the final value between 0 and 100 so the UI
+  // can never display an invalid percentage.
+  const confidencePercent = Math.max(
+    0,
+    Math.min(
+      100,
+      result.confidence <= 1
+        ? result.confidence * 100
+        : result.confidence
+    )
+  );
 
   return (
     <div className="space-y-4">
       <div className="grid md:grid-cols-2 gap-4">
+
+        {/* Detected Algorithm */}
         <Card className="p-6 bg-white/90 dark:bg-black/80 border border-violet-500/30">
           <div className="flex items-center gap-2 mb-3">
             <CheckCircle2Icon className="h-5 w-5 text-violet-600 dark:text-violet-300" />
-            <h3 className="font-bold text-gray-900 dark:text-white">Detected Algorithm</h3>
+
+            <h3 className="font-bold text-gray-900 dark:text-white">
+              Detected Algorithm
+            </h3>
           </div>
-          <p className="text-2xl font-bold text-gray-900 dark:text-white">{result.algorithm}</p>
+
+          <p className="text-2xl font-bold text-gray-900 dark:text-white">
+            {result.algorithm}
+          </p>
+
           <p className="text-sm text-gray-500 dark:text-gray-400 mb-2">
             {result.algorithm_family} family
           </p>
+
           <span className="inline-block px-2 py-1 bg-violet-100 dark:bg-violet-900/40 text-violet-700 dark:text-violet-300 text-xs font-bold rounded-full border border-violet-200 dark:border-violet-500/30">
-            {(result.confidence * 100).toFixed(1)}% confidence
+            {confidencePercent.toFixed(1)}% confidence
           </span>
         </Card>
 
-        <Card className={`p-6 bg-white/90 dark:bg-black/80 border ${riskBorder}`}>
+        {/* Risk Assessment */}
+        <Card
+          className={`p-6 bg-white/90 dark:bg-black/80 border ${riskBorder}`}
+        >
           <div className="flex items-center gap-2 mb-3">
             <ShieldAlertIcon className="h-5 w-5 text-gray-700 dark:text-gray-300" />
-            <h3 className="font-bold text-gray-900 dark:text-white">Risk Assessment</h3>
+
+            <h3 className="font-bold text-gray-900 dark:text-white">
+              Risk Assessment
+            </h3>
           </div>
+
           <p className="text-2xl font-bold text-gray-900 dark:text-white">
             {result.risk_score.toFixed(0)}
-            <span className="text-sm text-gray-500 dark:text-gray-400 font-normal"> / 100</span>
+            <span className="text-sm text-gray-500 dark:text-gray-400 font-normal">
+              {" "}
+              / 100
+            </span>
           </p>
-          <span className={`inline-block mt-2 px-2 py-1 text-xs font-bold rounded-full border ${riskColorClasses(result.risk_level)}`}>
+
+          <span
+            className={`inline-block mt-2 px-2 py-1 text-xs font-bold rounded-full border ${riskColorClasses(
+              result.risk_level
+            )}`}
+          >
             {result.risk_level}
           </span>
         </Card>
       </div>
 
+      {/* Security Explanation */}
       <Card className="p-6 bg-white/90 dark:bg-black/80 border border-violet-500/30">
         <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
           <div className="flex items-center gap-2">
             <BookOpenIcon className="h-5 w-5 text-violet-600 dark:text-violet-300" />
-            <h3 className="font-bold text-gray-900 dark:text-white">Security Explanation</h3>
+
+            <h3 className="font-bold text-gray-900 dark:text-white">
+              Security Explanation
+            </h3>
           </div>
+
           <span className="text-xs font-medium text-gray-500 dark:text-gray-500">
             {result.generated_by === "template_fallback"
               ? "Template fallback"
               : `Generated by ${result.generated_by}`}
           </span>
         </div>
+
         <p className="text-sm text-gray-700 dark:text-gray-300 leading-relaxed mb-4">
           {result.summary}
         </p>
 
+        {/* Recommendations */}
         {result.recommendations?.length > 0 && (
           <div className="mb-4">
             <p className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-2">
               Recommendations
             </p>
+
             <ul className="space-y-1.5">
               {result.recommendations.map((rec, i) => (
-                <li key={i} className="flex items-start gap-2 text-sm text-gray-700 dark:text-gray-300">
+                <li
+                  key={i}
+                  className="flex items-start gap-2 text-sm text-gray-700 dark:text-gray-300"
+                >
                   <span className="mt-1.5 h-1.5 w-1.5 rounded-full bg-violet-500 shrink-0" />
                   {rec}
                 </li>
@@ -80,11 +143,13 @@ export default function ReportCard({ result }: { result: ExplanationResponse }) 
           </div>
         )}
 
+        {/* Referenced Standards */}
         {result.references?.length > 0 && (
           <div>
             <p className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase mb-2">
               Referenced Standards
             </p>
+
             <div className="flex flex-wrap gap-2">
               {result.references.map((ref, i) => (
                 <span
