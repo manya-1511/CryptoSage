@@ -2,26 +2,34 @@
 rag/explain.py
 
 Phase 7 -- Explanation generation: retrieval + prompt construction +
-local LLM (Ollama / Llama 3.1 8B Instruct) generation, with a
-deterministic template-based fallback when Ollama is unreachable.
+local LLM (Ollama / Qwen2.5 3B) generation, with output/citation
+validation and a deterministic template-based fallback whenever Ollama
+is unreachable, times out, or its output fails validation.
 
 This module produces the final, structured, evidence-backed
 explanation returned by `POST /explain/{firmware_id}`. It does not
 make security decisions -- every fact it explains (algorithm, family,
 confidence, risk score, risk factors, recommendations) was already
-decided by earlier phases (ML prediction, risk assessment,
-recommendation engine); this module only explains and cites evidence
-for those already-made decisions.
+decided by earlier phases; this module only explains and cites
+evidence for those already-made decisions.
+
+Pipeline (see rag/retriever.py, rag/validation.py for detail):
+
+    retrieval query -> ChromaDB candidates -> lightweight rerank
+        -> Qwen2.5 3B (Ollama) or template fallback
+        -> output validation -> citation validation
+        -> structured ExplanationResult
 
 **Local inference only** -- `OllamaClient` talks to a local Ollama
 server (`settings.OLLAMA_BASE_URL`, default `http://localhost:11434`)
-and never calls a paid/hosted API. If Ollama is not installed/running
-(as in this development sandbox, which has no network access to
-download the ~4-5 GB Llama 3.1 8B model weights), generation falls
-back to `generate_template_explanation()` -- a deterministic,
-non-hallucinating explanation built directly from the same structured
-data and retrieved citations, clearly labeled as a fallback rather than
-silently presented as an LLM response.
+running `settings.OLLAMA_MODEL` (default `qwen2.5:3b`) and never calls
+a paid/hosted API. If Ollama is not installed/running, or its response
+fails validation, generation falls back to
+`generate_template_explanation()` -- a deterministic, non-hallucinating
+explanation built directly from the same structured data and retrieved
+citations, clearly labeled as a fallback (`generated_by="template_fallback"`)
+rather than silently presented as an LLM response
+(`generated_by="ollama:<model>"` otherwise).
 """
 
 from __future__ import annotations
@@ -36,8 +44,10 @@ import requests
 
 from config import get_settings
 from rag.citations import Citation, citations_to_reference_strings, extract_citations
+from rag.evaluation import groundedness, semantic_groundedness
 from rag.prompt import build_explanation_prompt
 from rag.retriever import RetrieverError, build_retrieval_query, retrieve
+from rag.validation import ValidationResult, validate_explanation
 
 logger = logging.getLogger("cryptosage.rag.explain")
 
@@ -50,7 +60,11 @@ class ExplanationError(RuntimeError):
 
 @dataclass
 class ExplanationResult:
-    """The complete, structured output of the explanation pipeline."""
+    """The complete, structured output of the explanation pipeline.
+
+    All fields present in the pre-upgrade version are preserved
+    unchanged; everything below `generated_at` is additive.
+    """
 
     firmware_id: int
     algorithm: str
@@ -65,15 +79,23 @@ class ExplanationResult:
     generation_time_ms: float = 0.0
     generated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
+    # --- Phase 7 upgrade: additive fields (existing fields unchanged) ---
+    retrieval_time_ms: float = 0.0
+    llm_generation_time_ms: float = 0.0
+    total_generation_time_ms: float = 0.0
+    citation_validation: dict[str, Any] = field(default_factory=dict)
+    semantic_groundedness: Optional[float] = None
+
 
 class OllamaClient:
     """Minimal local client for Ollama's `/api/generate` HTTP endpoint.
 
     Never calls a paid/hosted API -- `base_url` defaults to a local
-    Ollama server. Every method degrades gracefully (returns `None`,
-    never raises) on connection failure, timeout, or a non-200
-    response, so the caller can fall back to the deterministic
-    template explanation.
+    Ollama server, `model` defaults to `settings.OLLAMA_MODEL`
+    (`qwen2.5:3b`), and neither is ever hardcoded here. Every method
+    degrades gracefully (returns `None`/`False`, never raises) on
+    connection failure, timeout, or a non-200 response, so the caller
+    can fall back to the deterministic template explanation.
     """
 
     def __init__(self, base_url: Optional[str] = None, model: Optional[str] = None, timeout: Optional[int] = None) -> None:
@@ -90,13 +112,19 @@ class OllamaClient:
             return False
 
     def generate(self, prompt: str) -> Optional[str]:
-        """Generate a completion for `prompt`. Returns None on any failure."""
+        """Generate a completion for `prompt`. Returns None on any failure
+        (including timeout -- callers must treat that identically to
+        "Ollama unavailable" and fall back to the template).
+        """
         try:
             response = requests.post(
                 f"{self.base_url}/api/generate",
                 json={"model": self.model, "prompt": prompt, "stream": False},
                 timeout=self.timeout,
             )
+        except requests.Timeout:
+            logger.warning("Ollama request timed out after %ds; treating as unavailable.", self.timeout)
+            return None
         except requests.RequestException as exc:
             logger.warning("Ollama request failed (%s); no local LLM available.", exc)
             return None
@@ -116,7 +144,10 @@ def _parse_llm_sections(llm_text: str) -> dict[str, str]:
     """Best-effort split of the LLM's free-text response into the five
     required sections, keyed by section name. Falls back to putting the
     whole response under "Algorithm Detection" if section headers
-    aren't found, so no LLM output is ever silently discarded.
+    aren't found, so no LLM output is ever silently discarded -- an
+    unparsed response still goes through `validate_explanation`, which
+    will correctly flag the other four sections as missing and trigger
+    the template fallback.
     """
     section_names = [
         "Algorithm Detection", "Confidence Explanation", "Risk Assessment Explanation",
@@ -158,16 +189,22 @@ def generate_template_explanation(
 ) -> dict[str, str]:
     """Deterministic, template-based explanation (no LLM).
 
-    Used when Ollama is unavailable. Every sentence is built directly
-    from the already-computed structured data and the retrieved
-    citations -- nothing is invented, so this trivially satisfies the
-    "no hallucination" requirement, just without an LLM's fluency.
+    Used when Ollama is unavailable or its output fails validation.
+    Every sentence is built directly from the already-computed
+    structured data and the retrieved citations -- nothing is invented,
+    so this trivially satisfies the "no hallucination" requirement,
+    just without an LLM's fluency.
     """
     citations = extract_citations(retrieved_documents)
     reference_list = ", ".join(citations_to_reference_strings(citations)) or "no supporting documents were retrieved"
 
     triggered = [f for f in risk_factors if f.get("contribution", 0) > 0]
     triggered_names = ", ".join(f["factor"] for f in triggered) or "none"
+
+    def _cite(citation: Optional[Citation]) -> str:
+        return f" [{citation.display}]" if citation else ""
+
+    primary_citation = citations[0] if citations else None
 
     sections = {
         "Algorithm Detection": (
@@ -176,16 +213,15 @@ def generate_template_explanation(
             f"binary-level evidence -- matched cryptographic constants and/or "
             f"symbol names consistent with {algorithm} implementations, as "
             f"identified by the CryptoSage feature-extraction and hierarchical "
-            f"classification pipeline."
+            f"classification pipeline.{_cite(primary_citation)}"
         ),
         "Confidence Explanation": (
             f"The model reported a confidence of {confidence}% for this "
             f"prediction, reflecting the predicted-class probability from the "
             f"algorithm-stage classifier. Confidence below the pipeline's "
             f"low-confidence threshold causes the risk assessment to partially "
-            f"discount algorithm-dependent risk factors (see the risk "
-            f"assessment methodology); at {confidence}%, that adjustment "
-            f"{'was applied' if confidence < 50 else 'was not applied'}."
+            f"discount algorithm-dependent risk factors; at {confidence}%, that "
+            f"adjustment {'was applied' if confidence < 50 else 'was not applied'}."
         ),
         "Risk Assessment Explanation": (
             f"The firmware received a risk score of {risk_score} ({risk_level}), "
@@ -226,12 +262,13 @@ def explain_firmware(
     risk_factors: list[dict[str, Any]],
     recommendations: list[str],
     top_k: Optional[int] = None,
+    candidate_k: Optional[int] = None,
 ) -> ExplanationResult:
     """Run the full Phase 7 explanation pipeline for one binary's results.
 
-    Retrieval -> prompt construction -> local LLM generation (or
-    deterministic template fallback if Ollama is unavailable) ->
-    citation extraction -> structured result.
+    Retrieval (two-stage, reranked) -> prompt construction -> local LLM
+    generation (or deterministic template fallback) -> output/citation
+    validation (fallback again on failure) -> structured result.
 
     Raises:
         ExplanationError: if required inputs (`algorithm`,
@@ -247,21 +284,33 @@ def explain_firmware(
         raise ExplanationError(message)
 
     started_at = time.perf_counter()
+    triggered_factor_names = [f["factor"] for f in risk_factors if f.get("contribution", 0) > 0]
 
-    query = build_retrieval_query(
-        algorithm, algorithm_family,
-        [f["factor"] for f in risk_factors if f.get("contribution", 0) > 0],
-        recommendations,
-    )
+    query = build_retrieval_query(algorithm, algorithm_family, triggered_factor_names, recommendations)
+
+    retrieval_started = time.perf_counter()
     try:
-        retrieved_documents = retrieve(query, top_k=top_k)
+        retrieved_documents = retrieve(
+            query,
+            top_k=top_k,
+            candidate_k=candidate_k,
+            algorithm=algorithm,
+            algorithm_family=algorithm_family,
+            risk_factors=triggered_factor_names,
+            recommendations=recommendations,
+        )
     except RetrieverError as exc:
         logger.warning("Retrieval unavailable (%s); proceeding with no retrieved context.", exc)
         retrieved_documents = []
+    retrieval_time_ms = round((time.perf_counter() - retrieval_started) * 1000, 2)
+
+    citations = extract_citations(retrieved_documents)
 
     ollama_client = OllamaClient()
     generated_by = "template_fallback"
     sections: dict[str, str]
+    llm_generation_time_ms = 0.0
+    validation_result: Optional[ValidationResult] = None
 
     if ollama_client.is_available():
         prompt = build_explanation_prompt(
@@ -269,11 +318,30 @@ def explain_firmware(
             risk_score, risk_level, risk_factors, recommendations, retrieved_documents,
         )
         logger.info("Prompt construction completed; requesting local LLM generation (%s).", ollama_client.model)
+        llm_started = time.perf_counter()
         llm_response = ollama_client.generate(prompt)
+        llm_generation_time_ms = round((time.perf_counter() - llm_started) * 1000, 2)
+
         if llm_response:
-            sections = _parse_llm_sections(llm_response)
-            generated_by = f"ollama:{ollama_client.model}"
-            logger.info("LLM response received (%d characters).", len(llm_response))
+            candidate_sections = _parse_llm_sections(llm_response)
+            validation_result = validate_explanation(
+                candidate_sections, citations, algorithm, confidence,
+                risk_score, risk_level, risk_factors, recommendations,
+            )
+            if validation_result.valid:
+                sections = candidate_sections
+                generated_by = f"ollama:{ollama_client.model}"
+                logger.info(
+                    "LLM response received (%d characters) and passed validation.", len(llm_response),
+                )
+            else:
+                logger.warning(
+                    "LLM output invalid (%s); falling back to deterministic template.", validation_result.reason,
+                )
+                sections = generate_template_explanation(
+                    algorithm, algorithm_family, confidence, risk_score, risk_level,
+                    risk_factors, recommendations, retrieved_documents,
+                )
         else:
             logger.warning("Ollama was reachable but returned no usable response; using template fallback.")
             sections = generate_template_explanation(
@@ -290,16 +358,37 @@ def explain_firmware(
             risk_factors, recommendations, retrieved_documents,
         )
 
-    citations = extract_citations(retrieved_documents)
     references = citations_to_reference_strings(citations)
     logger.info("Citation generation completed: %d reference(s).", len(references))
 
+    # Citation validation is always run and reported, even for the
+    # template fallback (which is citation-safe by construction), so
+    # `citation_validation` in the response always reflects reality.
+    final_citation_check = (
+        validation_result.to_dict()
+        if validation_result is not None
+        else validate_explanation(
+            sections, citations, algorithm, confidence, risk_score, risk_level, risk_factors, recommendations,
+        ).to_dict()
+    )
+    logger.info(
+        "Citation validation: %s | Output validation: %s",
+        "PASS" if not final_citation_check["invalid_citations"] else "FAIL",
+        "PASS" if final_citation_check["valid"] else "FAIL (used template fallback)",
+    )
+
+    combined_text = "\n".join(sections.values())
+    semantic_ground = None
+    if retrieved_documents:
+        semantic_ground = semantic_groundedness(combined_text, retrieved_documents)
+
     summary = _build_summary(sections, algorithm, risk_level)
-    generation_time_ms = round((time.perf_counter() - started_at) * 1000, 2)
+    total_generation_time_ms = round((time.perf_counter() - started_at) * 1000, 2)
 
     logger.info(
-        "Explanation generation completed: firmware_id=%s, generated_by=%s, time=%.2fms",
-        firmware_id, generated_by, generation_time_ms,
+        "Explanation generation completed: firmware_id=%s, generated_by=%s, "
+        "retrieval=%.2fms, llm=%.2fms, total=%.2fms",
+        firmware_id, generated_by, retrieval_time_ms, llm_generation_time_ms, total_generation_time_ms,
     )
 
     return ExplanationResult(
@@ -313,5 +402,28 @@ def explain_firmware(
         references=references,
         retrieved_documents=retrieved_documents,
         generated_by=generated_by,
-        generation_time_ms=generation_time_ms,
+        generation_time_ms=total_generation_time_ms,
+        retrieval_time_ms=retrieval_time_ms,
+        llm_generation_time_ms=llm_generation_time_ms,
+        total_generation_time_ms=total_generation_time_ms,
+        citation_validation=final_citation_check,
+        semantic_groundedness=semantic_ground,
     )
+
+
+def rag_pipeline_metadata() -> dict[str, Any]:
+    """Small, honest configuration/metadata snapshot for the research
+    paper (spec section 20) -- describes *configuration*, not measured
+    performance. Never put a fabricated benchmark number in here; real
+    numbers come only from running `rag/evaluation.py` and reporting
+    what it actually returns.
+    """
+    return {
+        "llm": settings.OLLAMA_MODEL,
+        "embedding_model": settings.RAG_EMBEDDING_MODEL,
+        "retrieval_candidate_k": settings.RAG_CANDIDATE_K,
+        "final_top_k": settings.RAG_TOP_K,
+        "reranking": True,
+        "citation_validation": True,
+        "output_validation": True,
+    }

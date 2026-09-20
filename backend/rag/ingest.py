@@ -3,14 +3,6 @@ rag/ingest.py
 
 Phase 7 -- Knowledge base ingestion: discover documents, chunk them,
 generate embeddings, and store them in ChromaDB.
-
-Supports the document categories named in the specification (NIST
-Publications, MITRE CWE/ATT&CK, OWASP IoT Top 10, CISA Advisories, RFC
-Documents, Cryptographic Standards, Academic Papers, Vendor
-Documentation) via a lightweight, per-file YAML-style front-matter
-header (`title`, `source_type`, `identifier`) at the top of each
-Markdown/text file in `rag/knowledge_base/`. Chunking uses LangChain's
-`RecursiveCharacterTextSplitter`.
 """
 
 from __future__ import annotations
@@ -29,26 +21,39 @@ logger = logging.getLogger("cryptosage.rag.ingest")
 
 settings = get_settings()
 
-# Front-matter delimiter, e.g.:
-#   ---
-#   title: NIST FIPS 197 — Advanced Encryption Standard (AES)
-#   source_type: NIST
-#   identifier: FIPS 197
-#   ---
 _FRONT_MATTER_RE = re.compile(r"^---\n(?P<header>.*?)\n---\n(?P<body>.*)$", re.DOTALL)
+
+# Matches a Markdown heading line ("#", "##", ... "######") so a
+# document's body can be split into (section_title, section_body)
+# pairs *before* the character-level splitter runs on each section.
+_HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$", re.MULTILINE)
+
+# Optional "document_category" front-matter field maps a source_type
+# onto the broader groupings named in the spec, for filtering/reporting.
+_SOURCE_TYPE_TO_CATEGORY: dict[str, str] = {
+    "NIST": "standard",
+    "RFC": "standard",
+    "Cryptographic Standard": "standard",
+    "MITRE": "weakness_taxonomy",
+    "CWE": "weakness_taxonomy",
+    "ATT&CK": "threat_taxonomy",
+    "OWASP": "guideline",
+    "CISA": "advisory",
+    "Academic Paper": "research",
+    "Vendor Documentation": "vendor",
+}
 
 CHUNK_SIZE = 800
 CHUNK_OVERLAP = 100
 SUPPORTED_EXTENSIONS: frozenset[str] = frozenset({".md", ".txt"})
+# ChromaDB distance metric for the collection. Must match
+# rag/retriever.py::CHROMA_DISTANCE_METRIC -- ingestion and retrieval
+# must agree on what "distance" means, or `1 - distance` in the
+# retriever is not a meaningful similarity.
+CHROMA_DISTANCE_METRIC = "cosine"
 
 
 def discover_documents(knowledge_base_dir: Path) -> list[Path]:
-    """Find every ingestible document under `knowledge_base_dir`.
-
-    Never raises: a missing directory simply yields no documents
-    (logged as a warning), consistent with graceful-recovery error
-    handling elsewhere in the pipeline.
-    """
     if not knowledge_base_dir.exists():
         logger.warning("Knowledge base directory does not exist: %s", knowledge_base_dir)
         return []
@@ -62,13 +67,6 @@ def discover_documents(knowledge_base_dir: Path) -> list[Path]:
 
 
 def parse_document(path: Path) -> dict[str, Any]:
-    """Parse one document's front-matter metadata and body content.
-
-    A document with no front-matter is still ingested (with a
-    best-effort `title` derived from the filename), rather than being
-    skipped -- partial metadata is preferred over silently dropping
-    content from the knowledge base.
-    """
     try:
         raw_text = path.read_text(encoding="utf-8")
     except OSError as exc:
@@ -94,19 +92,65 @@ def parse_document(path: Path) -> dict[str, Any]:
     }
 
 
-def chunk_document(content: str, chunk_size: int = CHUNK_SIZE, chunk_overlap: int = CHUNK_OVERLAP) -> list[str]:
-    """Split a document's body text into overlapping chunks (LangChain).
+def split_into_sections(content: str) -> list[dict[str, str]]:
+    """Split a document body into `{"section": heading, "text": body}` blocks
+    on Markdown headings (`#`..`######`), so a section's heading stays
+    attached to its own paragraphs before the character-level splitter
+    ever runs. Content preceding the first heading (or a document with
+    no headings at all) becomes a single section with `section=""`.
+    """
+    headings = list(_HEADING_RE.finditer(content))
+    if not headings:
+        return [{"section": "", "text": content}]
 
-    `RecursiveCharacterTextSplitter` tries paragraph, then sentence,
-    then word boundaries in order, so chunks stay coherent rather than
-    breaking mid-sentence wherever possible.
+    sections: list[dict[str, str]] = []
+    if headings[0].start() > 0:
+        preamble = content[: headings[0].start()].strip()
+        if preamble:
+            sections.append({"section": "", "text": preamble})
+
+    for i, match in enumerate(headings):
+        title = match.group(2).strip()
+        start = match.end()
+        end = headings[i + 1].start() if i + 1 < len(headings) else len(content)
+        body = content[start:end].strip()
+        sections.append({"section": title, "text": f"{title}\n{body}" if body else title})
+
+    return sections
+
+
+def chunk_document(content: str, chunk_size: int = CHUNK_SIZE, chunk_overlap: int = CHUNK_OVERLAP) -> list[dict[str, str]]:
+    """Split a document's body text into overlapping chunks, keeping
+    headings attached to their own paragraphs where possible.
+
+    Two passes:
+      1. `split_into_sections` groups the body under its Markdown
+         headings (if any), so a heading and the paragraphs under it
+         are never separated by an arbitrary character-count cut.
+      2. Within each section, LangChain's `RecursiveCharacterTextSplitter`
+         (paragraph, then sentence, then word boundaries, in order)
+         further splits only if that section alone still exceeds
+         `chunk_size` -- most knowledge-base sections (NIST/CWE/OWASP
+         entries etc.) are short enough that this second pass is a
+         no-op and the section is kept whole.
+
+    Returns `{"section": heading, "text": chunk_text}` dicts, not bare
+    strings, so callers can attach "section" to each chunk's metadata.
     """
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
         chunk_overlap=chunk_overlap,
         separators=["\n\n", "\n", ". ", " ", ""],
     )
-    return splitter.split_text(content)
+
+    chunks: list[dict[str, str]] = []
+    for block in split_into_sections(content):
+        section_title, text = block["section"], block["text"]
+        if not text:
+            continue
+        for piece in splitter.split_text(text):
+            chunks.append({"section": section_title, "text": piece})
+    return chunks
 
 
 def ingest_knowledge_base(
@@ -114,14 +158,6 @@ def ingest_knowledge_base(
     persist_dir: Path | None = None,
     embedding_backend: EmbeddingBackend | None = None,
 ) -> dict[str, Any]:
-    """Ingest every document in the knowledge base into ChromaDB.
-
-    Idempotent: re-running clears and rebuilds the collection, so
-    ingestion can safely be re-run after the knowledge base is edited
-    without accumulating duplicate/stale chunks.
-
-    Returns a summary dict: `{"documents": N, "chunks": M, "embedding_backend": name}`.
-    """
     import chromadb
 
     knowledge_base_dir = knowledge_base_dir or settings.RAG_KNOWLEDGE_BASE_DIR
@@ -138,13 +174,18 @@ def ingest_knowledge_base(
 
     try:
         client.delete_collection(settings.RAG_COLLECTION_NAME)
-    except Exception:  # noqa: BLE001 - collection may not exist yet on first run
+    except Exception:  # noqa: BLE001
         pass
 
     collection = client.create_collection(
         name=settings.RAG_COLLECTION_NAME,
         embedding_function=embedding_backend.embed,
-        metadata={"embedding_backend": embedding_backend.name},
+        # Explicit distance metric -- see CHROMA_DISTANCE_METRIC above
+        # and rag/retriever.py's module docstring. Without this,
+        # ChromaDB's default (also cosine, but implicit) could silently
+        # diverge from what the retriever assumes when converting
+        # `distance` to `similarity`.
+        metadata={"embedding_backend": embedding_backend.name, "hnsw:space": CHROMA_DISTANCE_METRIC},
     )
 
     all_chunk_texts: list[str] = []
@@ -158,17 +199,25 @@ def ingest_knowledge_base(
             continue
 
         chunks = chunk_document(parsed["content"])
-        logger.info("Chunked '%s' into %d chunk(s).", parsed["title"], len(chunks))
+        logger.info("Chunked '%s' into %d chunk(s) (document-structure-aware).", parsed["title"], len(chunks))
 
-        for chunk_index, chunk_text in enumerate(chunks):
-            all_chunk_texts.append(chunk_text)
+        document_category = _SOURCE_TYPE_TO_CATEGORY.get(parsed["source_type"], "other")
+
+        for chunk_index, chunk in enumerate(chunks):
+            all_chunk_texts.append(chunk["text"])
             all_chunk_ids.append(f"{document_path.stem}::{chunk_index}")
+            # Original metadata fields are unchanged (title, source_type,
+            # identifier, source_file, chunk_index) -- "section" and
+            # "document_category" are additive, so existing consumers of
+            # this metadata keep working unmodified.
             all_chunk_metadata.append({
                 "title": parsed["title"],
                 "source_type": parsed["source_type"],
                 "identifier": parsed["identifier"],
                 "source_file": document_path.name,
                 "chunk_index": chunk_index,
+                "section": chunk["section"],
+                "document_category": document_category,
             })
 
     if all_chunk_texts:

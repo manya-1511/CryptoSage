@@ -94,12 +94,38 @@ class Settings:
         os.getenv("RAG_CHROMA_PERSIST_DIR", str(BASE_DIR / "rag" / "chroma_store"))
     )
     RAG_COLLECTION_NAME: str = os.getenv("RAG_COLLECTION_NAME", "cryptosage_knowledge_base")
-    RAG_TOP_K: int = int(os.getenv("RAG_TOP_K", "4"))
+
+    # Final number of evidence chunks handed to the LLM after reranking.
+    # Was 4; raised to 5 (Phase 7 upgrade spec's suggested default) now
+    # that a candidate pool wider than the final depth exists to rerank
+    # over -- still fully overridable via RAG_TOP_K.
+    RAG_TOP_K: int = int(os.getenv("RAG_TOP_K", "5"))
+
+    # Phase 7 upgrade: two-stage retrieval. ChromaDB returns
+    # RAG_CANDIDATE_K candidates; the lightweight deterministic
+    # reranker (rag/retriever.py::rerank) narrows that down to
+    # RAG_TOP_K before the prompt is built. Must stay >= RAG_TOP_K
+    # (rag/retriever.py enforces this defensively too).
+    RAG_CANDIDATE_K: int = int(os.getenv("RAG_CANDIDATE_K", "8"))
+
+    # Phase 7 upgrade: reranker blend weights -- see rag/retriever.py::rerank
+    # for the formula. Configurable rather than hardcoded, per spec section 3.
+    RAG_RERANK_WEIGHT_SEMANTIC: float = float(os.getenv("RAG_RERANK_WEIGHT_SEMANTIC", "0.60"))
+    RAG_RERANK_WEIGHT_ALGORITHM: float = float(os.getenv("RAG_RERANK_WEIGHT_ALGORITHM", "0.20"))
+    RAG_RERANK_WEIGHT_RISK_FACTOR: float = float(os.getenv("RAG_RERANK_WEIGHT_RISK_FACTOR", "0.10"))
+    RAG_RERANK_WEIGHT_METADATA: float = float(os.getenv("RAG_RERANK_WEIGHT_METADATA", "0.10"))
+
     RAG_EMBEDDING_MODEL: str = os.getenv("RAG_EMBEDDING_MODEL", "BAAI/bge-small-en-v1.5")
 
     # Local LLM (Ollama). Never a paid/hosted API.
+    # Phase 7 upgrade: was "qwen2.5:1.5b", now "qwen2.5:3b" per spec
+    # section 1 ("Replace the current default LLM ... with qwen2.5:3b").
+    # OLLAMA_TIMEOUT_SECONDS is left at its existing 180s default rather
+    # than the spec's illustrative 120s -- 180s was already tuned here
+    # for CPU-only generation and is more forgiving for the larger 3B
+    # model, and both remain fully overridable via the environment.
     OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
-    OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "qwen2.5:1.5b")
+    OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "qwen2.5:3b")
     OLLAMA_TIMEOUT_SECONDS: int = int(os.getenv("OLLAMA_TIMEOUT_SECONDS", "180"))
 
     # Maximum accepted upload size, in megabytes. Configurable via

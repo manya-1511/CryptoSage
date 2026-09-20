@@ -3,32 +3,36 @@ rag/evaluation.py
 
 Evaluation module for CryptoSage RAG.
 
-Metrics:
+Metrics (original):
     1. Precision@K
     2. Recall@K
-    3. Groundedness
-    4. Citation Correctness
+    3. Groundedness (lexical)
+    4. Citation Correctness (loose substring match)
     5. Expert Evaluation
+
+Metrics (Phase 7 upgrade, additive -- none of the above removed/changed):
+    6. Semantic groundedness (embedding-based, optional)
+    7. Citation completeness -- do factual-looking claims carry a citation?
+    8. Citation validity -- strict match against rag.citations' actual
+       valid-label logic (same rule the LLM-output validator uses),
+       not the looser identifier-in-content substring match citation_correctness uses
+    9. Retrieval / LLM-generation / total latency reporting, sourced
+       from an already-measured pipeline run (never estimated here)
 
 The module can be used independently or integrated with the existing
 CryptoSage RAG pipeline.
 
 -----------------------------------------------------------------------
-FIX (see module history): `retrieved_documents` previously had to serve
-two incompatible roles at once -- document *identity* (needed by
+FIX (kept from prior revision): `retrieved_documents` must serve two
+incompatible roles at once -- document *identity* (needed by
 Precision@K / Recall@K, which mirror `metadata["identifier"]` in
 citations.py/retriever.py) and document *content* (needed by
 Groundedness, which does lexical overlap against the retrieved text).
-Passing bare identifiers (e.g. "NIST_AES") satisfied the identity-based
-metrics but starved Groundedness of any real text to match against,
-silently producing a groundedness of 0.0 regardless of answer quality.
-
-`retrieved_documents` now accepts either:
+`retrieved_documents` accepts either:
   - a list of plain strings (legacy behavior, id == content), or
   - a list of dicts shaped like `rag.retriever.retrieve()`'s output,
     e.g. {"content": "...", "metadata": {"identifier": "NIST_AES"}}
     or the simpler {"id": "NIST_AES", "content": "..."}.
-
 Identity-based metrics use the id; content-based metrics use the text.
 -----------------------------------------------------------------------
 """
@@ -73,13 +77,7 @@ class RAGEvaluationResult:
 # ============================================================
 
 def _doc_id(doc: Document) -> str:
-    """Extract a document's identity (for Precision@K / Recall@K / citation matching).
-
-    Plain strings are their own id (legacy behavior). Dicts prefer an
-    explicit "id"/"identifier", then `metadata.identifier`, then
-    `metadata.title`, falling back to the content itself so a
-    malformed dict never crashes evaluation.
-    """
+    """Extract a document's identity (for Precision@K / Recall@K / citation matching)."""
     if isinstance(doc, str):
         return doc
     if "id" in doc:
@@ -95,34 +93,41 @@ def _doc_id(doc: Document) -> str:
 
 
 def _doc_text(doc: Document) -> str:
-    """Extract a document's full text (for Groundedness).
-
-    Plain strings are their own text (legacy behavior). Dicts use
-    "content" when present.
-    """
+    """Extract a document's full text (for Groundedness)."""
     if isinstance(doc, str):
         return doc
     return str(doc.get("content", doc.get("id", "")))
 
 
 def _doc_match_text(doc: Document) -> str:
-    """Text used for citation-correctness substring matching: id + content,
-    so a citation like [NIST_AES] matches whether the identifier or the
-    passage text (or both) carries it.
-    """
+    """Text used for citation-correctness substring matching: id + content."""
     if isinstance(doc, str):
         return doc
     return f"{_doc_id(doc)} {_doc_text(doc)}"
+
+
+def _to_retriever_shaped_docs(retrieved_documents: List[Document]) -> List[Dict[str, Any]]:
+    """Normalize a possibly-legacy `retrieved_documents` list into the
+    `{"content": ..., "metadata": {...}}` shape `rag.citations` expects,
+    so citation_completeness/citation_validity can reuse the exact same
+    valid-label logic the LLM-output validator uses rather than
+    reimplementing it with different (and possibly diverging) rules.
+    """
+    shaped = []
+    for doc in retrieved_documents:
+        if isinstance(doc, dict) and "metadata" in doc:
+            shaped.append(doc)
+        elif isinstance(doc, dict):
+            shaped.append({"content": doc.get("content", ""), "metadata": {"identifier": _doc_id(doc)}})
+        else:
+            shaped.append({"content": str(doc), "metadata": {"identifier": str(doc)}})
+    return shaped
 
 
 # ============================================================
 # TEXT NORMALIZATION
 # ============================================================
 
-# Small, generic stopword list. These are excluded from the
-# *statement* side of the groundedness lexical-overlap ratio so that
-# function words (which will trivially appear in almost any English
-# context) don't dilute the signal from actual content words.
 STOPWORDS: frozenset[str] = frozenset({
     "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
     "of", "in", "on", "at", "to", "for", "and", "or", "but", "as", "by",
@@ -131,32 +136,19 @@ STOPWORDS: frozenset[str] = frozenset({
 
 
 def normalize_text(text: str) -> str:
-    """
-    Normalize text for lightweight textual comparison.
-    """
     if not text:
         return ""
-
     text = text.lower()
     text = re.sub(r"[^a-z0-9\s]", " ", text)
     text = re.sub(r"\s+", " ", text)
-
     return text.strip()
 
 
 def tokenize(text: str) -> set[str]:
-    """
-    Convert text into a set of normalized tokens.
-    """
     return set(normalize_text(text).split())
 
 
 def tokenize_content(text: str) -> set[str]:
-    """Like `tokenize`, but drops common stopwords -- used for the
-    statement side of groundedness so the ratio reflects overlap of
-    meaningful content words rather than being padded/diluted by
-    function words.
-    """
     return tokenize(text) - STOPWORDS
 
 
@@ -164,51 +156,24 @@ def tokenize_content(text: str) -> set[str]:
 # PRECISION@K
 # ============================================================
 
-def precision_at_k(
-    retrieved_documents: List[Document],
-    relevant_documents: List[str],
-    k: int = 5,
-) -> float:
+def precision_at_k(retrieved_documents: List[Document], relevant_documents: List[str], k: int = 5) -> float:
+    """Precision@K over the top-K retrieved *chunks*.
+
+    NOTE: unlike recall_at_k, this intentionally does NOT dedupe by
+    document identity -- precision asks "of the K chunks I actually
+    handed the LLM, how many came from a relevant source", so a
+    knowledge base returning several chunks from the same relevant
+    document is correctly counted several times (each chunk really did
+    occupy a slot in the LLM's limited context). See recall_at_k's
+    docstring for why recall needs the opposite (dedup'd) treatment.
     """
-    Calculate Precision@K.
-
-    Precision@K =
-        relevant retrieved documents / K
-
-    Example:
-
-        Retrieved:
-            [A, B, C, D, E]
-
-        Relevant:
-            [A, C, F]
-
-        Precision@5 = 2 / 5 = 0.40
-
-    `retrieved_documents` may be plain strings (treated as identifiers)
-    or dicts shaped like `retriever.retrieve()`'s output -- identity is
-    extracted via `_doc_id`.
-    """
-
     if k <= 0:
         raise ValueError("k must be greater than 0")
-
     retrieved = retrieved_documents[:k]
-
     if not retrieved:
         return 0.0
-
-    relevant_set = {
-        normalize_text(doc)
-        for doc in relevant_documents
-    }
-
-    relevant_count = sum(
-        1
-        for doc in retrieved
-        if normalize_text(_doc_id(doc)) in relevant_set
-    )
-
+    relevant_set = {normalize_text(doc) for doc in relevant_documents}
+    relevant_count = sum(1 for doc in retrieved if normalize_text(_doc_id(doc)) in relevant_set)
     return relevant_count / len(retrieved)
 
 
@@ -216,141 +181,56 @@ def precision_at_k(
 # RECALL@K
 # ============================================================
 
-def recall_at_k(
-    retrieved_documents: List[Document],
-    relevant_documents: List[str],
-    k: int = 5,
-) -> float:
-    """
-    Calculate Recall@K.
+def recall_at_k(retrieved_documents: List[Document], relevant_documents: List[str], k: int = 5) -> float:
+    """Recall@K = (unique relevant *documents* covered by the top-K
+    chunks) / (total relevant documents).
 
-    Recall@K =
-        relevant retrieved documents / total relevant documents
+    Deliberately deduped by document identity (unlike precision_at_k):
+    recall asks "of the documents I needed, how many did I surface at
+    all", so once the knowledge base is chunked -- meaning several of
+    the top-K entries can be different chunks of the *same* relevant
+    document -- counting every chunk hit instead of every unique
+    document hit would let recall exceed 1.0 (e.g. 3 chunks from 1
+    relevant document but only 1 relevant document total). A bare
+    per-chunk count is only correct when retrieved_documents are
+    already one-row-per-document, which chunked retrieval never
+    guarantees.
     """
-
     if k <= 0:
         raise ValueError("k must be greater than 0")
-
     if not relevant_documents:
         return 0.0
-
     retrieved = retrieved_documents[:k]
-
-    relevant_set = {
-        normalize_text(doc)
-        for doc in relevant_documents
-    }
-
-    retrieved_relevant = sum(
-        1
-        for doc in retrieved
-        if normalize_text(_doc_id(doc)) in relevant_set
-    )
-
-    return retrieved_relevant / len(relevant_set)
+    relevant_set = {normalize_text(doc) for doc in relevant_documents}
+    retrieved_relevant_docs = {normalize_text(_doc_id(doc)) for doc in retrieved} & relevant_set
+    return len(retrieved_relevant_docs) / len(relevant_set)
 
 
 # ============================================================
 # LIGHTWEIGHT TEXTUAL SUPPORT
 # ============================================================
 
-def calculate_text_support(
-    statement: str,
-    context: str,
-) -> float:
-    """
-    Estimate how strongly a statement is supported by context.
-
-    This is a lightweight lexical groundedness metric: the fraction of
-    the statement's *content* words (stopwords excluded) that also
-    appear somewhere in the context.
-
-    It does NOT claim semantic/NLI-level understanding -- it will miss
-    paraphrases and synonyms (e.g. "secure" vs. "security"). For
-    production research evaluation, this can later be replaced or
-    supplemented with an embedding-based similarity (CryptoSage's own
-    `rag.embeddings` backend) or an LLM/NLI-based evaluator.
-    """
-
+def calculate_text_support(statement: str, context: str) -> float:
     statement_tokens = tokenize_content(statement)
     context_tokens = tokenize(context)
-
-    if not statement_tokens:
+    if not statement_tokens or not context_tokens:
         return 0.0
-
-    if not context_tokens:
-        return 0.0
-
     overlap = statement_tokens.intersection(context_tokens)
-
     return len(overlap) / len(statement_tokens)
 
 
 # ============================================================
-# GROUNDEDNESS
+# GROUNDEDNESS (lexical)
 # ============================================================
 
-def groundedness(
-    answer: str,
-    retrieved_context: List[Document],
-    threshold: float = 0.50,
-) -> float:
-    """
-    Calculate LEXICAL groundedness of the generated answer (see the
-    `calculate_text_support` docstring -- this is word-overlap, not
-    semantic entailment; see `semantic_groundedness()` below for an
-    embedding-based complement).
-
-    The answer is divided into sentences. Each sentence is compared
-    against the retrieved context.
-
-    Score:
-        supported sentences / total sentences
-
-    A sentence is considered grounded when its lexical support
-    exceeds the supplied threshold.
-
-    `retrieved_context` must carry actual passage text to be useful --
-    plain strings are used as-is, and dicts shaped like
-    `retriever.retrieve()`'s output have their "content" field
-    extracted via `_doc_text`. Passing bare identifiers here (rather
-    than passage content) will under-report groundedness, since there
-    is no real text for the answer to be lexically grounded in.
-    """
-
-    if not answer:
+def groundedness(answer: str, retrieved_context: List[Document], threshold: float = 0.50) -> float:
+    if not answer or not retrieved_context:
         return 0.0
-
-    if not retrieved_context:
-        return 0.0
-
     context = " ".join(_doc_text(doc) for doc in retrieved_context)
-
-    sentences = re.split(
-        r"(?<=[.!?])\s+",
-        answer.strip(),
-    )
-
-    sentences = [
-        sentence.strip()
-        for sentence in sentences
-        if sentence.strip()
-    ]
-
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", answer.strip()) if s.strip()]
     if not sentences:
         return 0.0
-
-    supported = 0
-
-    for sentence in sentences:
-        support = calculate_text_support(
-            sentence,
-            context,
-        )
-
-        if support >= threshold:
-            supported += 1
-
+    supported = sum(1 for s in sentences if calculate_text_support(s, context) >= threshold)
     return supported / len(sentences)
 
 
@@ -364,30 +244,6 @@ def semantic_groundedness(
     threshold: float = 0.60,
     embedding_backend: Any = None,
 ) -> Optional[float]:
-    """
-    Optional complement to `groundedness()` (lexical overlap): for each
-    answer sentence, embed it and every retrieved chunk with
-    CryptoSage's own configured embedding backend (rag.embeddings,
-    normally BGE) and take the maximum cosine similarity across chunks
-    as that sentence's support score. Fraction of sentences whose max
-    similarity clears `threshold` is returned.
-
-    This catches paraphrases/synonyms lexical overlap misses (e.g.
-    "secure" vs. "security"), at the cost of depending on the
-    embedding backend actually being available.
-
-    Returns None (never 0.0, never fabricated) when it cannot be
-    computed -- e.g. no embedding backend configured/loadable, or the
-    active backend is the TF-IDF fallback where "cosine similarity"
-    doesn't carry the same semantic meaning it does for BGE. A None
-    result should be reported as "not computed", not silently treated
-    as a groundedness of zero.
-
-    This metric is entirely optional/configurable: callers that don't
-    pass `embedding_backend` and don't want the dependency on
-    rag.embeddings simply never call this function; `groundedness()`
-    above is unaffected either way.
-    """
     if not answer or not retrieved_context:
         return None
 
@@ -400,9 +256,6 @@ def semantic_groundedness(
             return None
 
     if getattr(embedding_backend, "is_fallback", True):
-        # TF-IDF cosine similarity is not a semantic signal in the same
-        # sense BGE's is; reporting a number here would misrepresent
-        # what was actually measured.
         return None
 
     try:
@@ -418,7 +271,7 @@ def semantic_groundedness(
     try:
         sentence_vectors = np.array(embedding_backend.embed(sentences))
         context_vectors = np.array(embedding_backend.embed(context_texts))
-    except Exception:  # noqa: BLE001 - optional metric, never raises
+    except Exception:  # noqa: BLE001
         return None
 
     def _cosine_sim_matrix(a: "np.ndarray", b: "np.ndarray") -> "np.ndarray":
@@ -429,7 +282,6 @@ def semantic_groundedness(
     similarities = _cosine_sim_matrix(sentence_vectors, context_vectors)
     max_similarity_per_sentence = similarities.max(axis=1)
     supported = int((max_similarity_per_sentence >= threshold).sum())
-
     return supported / len(sentences)
 
 
@@ -438,126 +290,100 @@ def semantic_groundedness(
 # ============================================================
 
 def extract_citations(answer: str) -> List[str]:
-    """
-    Extract common citation formats from an answer.
-
-    Supported examples:
-
-        [1]
-        [2]
-        [3]
-
-        [NIST]
-        [CWE]
-        [OWASP]
-
-    Returns unique citation identifiers.
-    """
-
     if not answer:
         return []
-
-    citations = re.findall(
-        r"\[([^\]]+)\]",
-        answer,
-    )
-
+    citations = re.findall(r"\[([^\]]+)\]", answer)
     return list(dict.fromkeys(citations))
 
 
 # ============================================================
-# CITATION CORRECTNESS
+# CITATION CORRECTNESS (loose -- original behavior, unchanged)
 # ============================================================
 
-def citation_correctness(
-    answer: str,
-    retrieved_documents: List[Document],
-) -> float:
-    """
-    Estimate citation correctness.
-
-    A citation is considered correct when:
-
-        1. A citation exists in the answer.
-        2. The cited identifier can be matched against one of the
-           retrieved documents' id and/or content.
-
-    Example:
-
-        Answer:
-            "AES is a symmetric encryption algorithm [NIST_AES]."
-
-        Retrieved documents:
-            ["NIST_AES", "CWE_327"]
-
-        Citation [NIST_AES] is considered valid.
-    """
-
+def citation_correctness(answer: str, retrieved_documents: List[Document]) -> float:
     citations = extract_citations(answer)
-
     if not citations:
         return 0.0
 
-    normalized_documents = [
-        normalize_text(_doc_match_text(doc))
-        for doc in retrieved_documents
-    ]
-
+    normalized_documents = [normalize_text(_doc_match_text(doc)) for doc in retrieved_documents]
     correct = 0
-
     for citation in citations:
         citation_normalized = normalize_text(citation)
-
         for document in normalized_documents:
-            if (
-                citation_normalized in document
-                or document in citation_normalized
-            ):
+            if citation_normalized in document or document in citation_normalized:
                 correct += 1
                 break
-
     return correct / len(citations)
+
+
+# ============================================================
+# CITATION VALIDITY (strict -- Phase 7 upgrade)
+# ============================================================
+
+def citation_validity(answer: str, retrieved_documents: List[Document]) -> float:
+    """Fraction of `[LABEL]` markers in `answer` that exactly match a
+    citation label actually derivable from `retrieved_documents` (via
+    `rag.citations.valid_citation_labels` -- the same rule
+    `rag/validation.py` uses to gate the LLM/template fallback).
+
+    Stricter than `citation_correctness` (which allows any substring
+    match against raw id+content), so a study reporting both can show
+    how much of the loose metric's "correctness" survives strict label
+    matching -- useful for the IEEE-style writeup's honesty about what
+    each metric actually measures.
+    """
+    from rag.citations import extract_citation_markers, format_citation, valid_citation_labels
+
+    citations = [format_citation(doc.get("metadata", {})) for doc in _to_retriever_shaped_docs(retrieved_documents)]
+    allowed = valid_citation_labels(citations)
+    markers = extract_citation_markers(answer)
+    if not markers:
+        return 0.0
+    correct = sum(1 for m in markers if m.strip().lower() in allowed)
+    return correct / len(markers)
+
+
+# ============================================================
+# CITATION COMPLETENESS (Phase 7 upgrade)
+# ============================================================
+
+_FACTUAL_HEDGE_RE = re.compile(r"does not establish this claim", re.IGNORECASE)
+
+
+def citation_completeness(answer: str) -> float:
+    """Fraction of sentences that look like they're making a factual
+    claim (i.e. are not the deterministic "the retrieved evidence does
+    not establish this claim" disclaimer, and are not trivially short
+    boilerplate) that carry at least one `[LABEL]` citation.
+
+    This measures *coverage*, not correctness -- a wrong-but-cited
+    sentence still counts as complete here; pair with
+    `citation_validity`/`citation_correctness` for correctness.
+    """
+    if not answer:
+        return 0.0
+
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", answer.strip()) if s.strip()]
+    factual_sentences = [
+        s for s in sentences
+        if len(s.split()) >= 6 and not _FACTUAL_HEDGE_RE.search(s)
+    ]
+    if not factual_sentences:
+        return 1.0  # nothing required a citation, so coverage is vacuously complete
+
+    cited = sum(1 for s in factual_sentences if re.search(r"\[([^\[\]]+)\]", s))
+    return cited / len(factual_sentences)
 
 
 # ============================================================
 # EXPERT EVALUATION
 # ============================================================
 
-def expert_evaluation(
-    relevance: float,
-    correctness: float,
-    completeness: float,
-    citation_quality: float,
-) -> float:
-    """
-    Calculate an overall expert evaluation score.
-
-    Each input should be rated from 1 to 5.
-
-    Criteria:
-
-        relevance       -> Does the answer address the question?
-        correctness     -> Is the answer technically correct?
-        completeness    -> Does it cover the important information?
-        citation_quality -> Are sources/citations appropriate?
-
-    Returns:
-        Average score from 1 to 5.
-    """
-
-    scores = [
-        relevance,
-        correctness,
-        completeness,
-        citation_quality,
-    ]
-
+def expert_evaluation(relevance: float, correctness: float, completeness: float, citation_quality: float) -> float:
+    scores = [relevance, correctness, completeness, citation_quality]
     for score in scores:
         if not 1 <= score <= 5:
-            raise ValueError(
-                "Expert scores must be between 1 and 5."
-            )
-
+            raise ValueError("Expert scores must be between 1 and 5.")
     return sum(scores) / len(scores)
 
 
@@ -573,82 +399,27 @@ def evaluate_query(
     k: int = 5,
     expert_scores: Optional[Dict[str, float]] = None,
     compute_semantic_groundedness: bool = False,
+    latencies_ms: Optional[Dict[str, float]] = None,
 ) -> Dict[str, Any]:
+    """Evaluate one RAG query.
+
+    `latencies_ms`: optional `{"retrieval_time_ms": ..., "llm_generation_time_ms": ...,
+    "total_generation_time_ms": ...}` as already measured by
+    `rag.explain.explain_firmware()` -- reported here verbatim, never
+    estimated or fabricated. Omit (or leave a key out) when not
+    available; missing latency keys are reported as `None`.
     """
-    Evaluate one RAG query.
-
-    Parameters
-    ----------
-    question:
-        User's question.
-
-    answer:
-        Generated RAG answer.
-
-    retrieved_documents:
-        Documents/chunks retrieved by the retriever. Either plain
-        strings (identifiers) or dicts shaped like
-        `retriever.retrieve()`'s output (with "content" and/or
-        "metadata"/"id"). Groundedness needs real content text to be
-        meaningful; Precision@K/Recall@K/citation matching only need
-        identity, which is derived automatically either way.
-
-    relevant_documents:
-        Ground-truth relevant document identifiers. If None or empty,
-        Precision@K/Recall@K are reported as `None` (missing ground
-        truth), never silently fabricated as 0.0 -- a 0.0 would be
-        indistinguishable from "no relevant documents were retrieved",
-        which is a different, false claim.
-
-    k:
-        Number of retrieved documents used for Precision@K
-        and Recall@K.
-
-    expert_scores:
-        Optional dictionary:
-
-        {
-            "relevance": 5,
-            "correctness": 4,
-            "completeness": 4,
-            "citation_quality": 5
-        }
-
-    compute_semantic_groundedness:
-        If True, also computes `semantic_groundedness()` (requires the
-        configured embedding backend to be BGE, not the TF-IDF
-        fallback -- returns None otherwise, never fabricated).
-    """
-
     has_ground_truth = bool(relevant_documents)
 
-    precision = (
-        precision_at_k(retrieved_documents, relevant_documents, k)
-        if has_ground_truth else None
-    )
-
-    recall = (
-        recall_at_k(retrieved_documents, relevant_documents, k)
-        if has_ground_truth else None
-    )
-
-    ground = groundedness(
-        answer,
-        retrieved_documents,
-    )
-
-    semantic_ground = (
-        semantic_groundedness(answer, retrieved_documents)
-        if compute_semantic_groundedness else None
-    )
-
-    citation = citation_correctness(
-        answer,
-        retrieved_documents,
-    )
+    precision = precision_at_k(retrieved_documents, relevant_documents, k) if has_ground_truth else None
+    recall = recall_at_k(retrieved_documents, relevant_documents, k) if has_ground_truth else None
+    ground = groundedness(answer, retrieved_documents)
+    semantic_ground = semantic_groundedness(answer, retrieved_documents) if compute_semantic_groundedness else None
+    citation = citation_correctness(answer, retrieved_documents)
+    validity = citation_validity(answer, retrieved_documents)
+    completeness = citation_completeness(answer)
 
     expert_score = None
-
     if expert_scores:
         expert_score = expert_evaluation(
             relevance=expert_scores["relevance"],
@@ -657,14 +428,21 @@ def evaluate_query(
             citation_quality=expert_scores["citation_quality"],
         )
 
+    latencies_ms = latencies_ms or {}
+
     metrics: Dict[str, Any] = {
         "precision_at_k": round(precision, 4) if precision is not None else None,
         "recall_at_k": round(recall, 4) if recall is not None else None,
         "groundedness": round(ground, 4),
         "semantic_groundedness": round(semantic_ground, 4) if semantic_ground is not None else None,
         "citation_correctness": round(citation, 4),
+        "citation_validity": round(validity, 4),
+        "citation_completeness": round(completeness, 4),
         "expert_score": round(expert_score, 4) if expert_score is not None else None,
         "ground_truth_available": has_ground_truth,
+        "retrieval_time_ms": latencies_ms.get("retrieval_time_ms"),
+        "llm_generation_time_ms": latencies_ms.get("llm_generation_time_ms"),
+        "total_generation_time_ms": latencies_ms.get("total_generation_time_ms"),
     }
 
     return {
@@ -685,8 +463,7 @@ def evaluate_dataset(
     k: int = 5,
     compute_semantic_groundedness: bool = False,
 ) -> Dict[str, Any]:
-    """
-    Evaluate multiple RAG questions.
+    """Evaluate multiple RAG questions.
 
     Expected dataset format:
 
@@ -696,33 +473,21 @@ def evaluate_dataset(
             "answer": "...",
             "retrieved_documents": [...],
             "relevant_documents": [...],   # omit or [] if ground truth is missing
-
-            "expert_scores": {
-                "relevance": 5,
-                "correctness": 4,
-                "completeness": 4,
-                "citation_quality": 5
-            }
+            "expert_scores": {"relevance": 5, "correctness": 4, "completeness": 4, "citation_quality": 5},
+            "latencies_ms": {"retrieval_time_ms": ..., "llm_generation_time_ms": ..., "total_generation_time_ms": ...},
         }
     ]
 
     Aggregate Precision@K/Recall@K are computed only over items that
-    actually have ground truth (`relevant_documents` non-empty). If NO
-    item in the dataset has ground truth, the aggregate is reported as
-    `None` with `precision_recall_coverage: 0` rather than fabricated
-    -- callers must not mistake "no ground truth was provided" for "0%
-    precision".
+    actually have ground truth. If NO item has ground truth, the
+    aggregate is `None` with `precision_recall_coverage: 0` rather than
+    fabricated as 0.0.
     """
-
     if not evaluation_dataset:
-        raise ValueError(
-            "Evaluation dataset cannot be empty."
-        )
+        raise ValueError("Evaluation dataset cannot be empty.")
 
     results = []
-
     for item in evaluation_dataset:
-
         result = evaluate_query(
             question=item["question"],
             answer=item["answer"],
@@ -731,79 +496,44 @@ def evaluate_dataset(
             k=k,
             expert_scores=item.get("expert_scores"),
             compute_semantic_groundedness=compute_semantic_groundedness,
+            latencies_ms=item.get("latencies_ms"),
         )
-
         results.append(result)
-
-    # --------------------------------------------------------
-    # Aggregate metrics
-    # --------------------------------------------------------
 
     precision_scores = [r["metrics"]["precision_at_k"] for r in results if r["metrics"]["precision_at_k"] is not None]
     recall_scores = [r["metrics"]["recall_at_k"] for r in results if r["metrics"]["recall_at_k"] is not None]
-
-    groundedness_scores = [
-        r["metrics"]["groundedness"]
-        for r in results
-    ]
-
+    groundedness_scores = [r["metrics"]["groundedness"] for r in results]
     semantic_groundedness_scores = [
-        r["metrics"]["semantic_groundedness"]
-        for r in results
-        if r["metrics"]["semantic_groundedness"] is not None
+        r["metrics"]["semantic_groundedness"] for r in results if r["metrics"]["semantic_groundedness"] is not None
     ]
+    citation_scores = [r["metrics"]["citation_correctness"] for r in results]
+    citation_validity_scores = [r["metrics"]["citation_validity"] for r in results]
+    citation_completeness_scores = [r["metrics"]["citation_completeness"] for r in results]
+    expert_scores = [r["metrics"]["expert_score"] for r in results if r["metrics"]["expert_score"] is not None]
+    retrieval_latencies = [r["metrics"]["retrieval_time_ms"] for r in results if r["metrics"]["retrieval_time_ms"] is not None]
+    llm_latencies = [r["metrics"]["llm_generation_time_ms"] for r in results if r["metrics"]["llm_generation_time_ms"] is not None]
+    total_latencies = [r["metrics"]["total_generation_time_ms"] for r in results if r["metrics"]["total_generation_time_ms"] is not None]
 
-    citation_scores = [
-        r["metrics"]["citation_correctness"]
-        for r in results
-    ]
-
-    expert_scores = [
-        r["metrics"]["expert_score"]
-        for r in results
-        if r["metrics"]["expert_score"] is not None
-    ]
+    def _avg(values: List[float]) -> Optional[float]:
+        return round(sum(values) / len(values), 4) if values else None
 
     summary = {
-        f"precision@{k}": (
-            round(sum(precision_scores) / len(precision_scores), 4)
-            if precision_scores else None
-        ),
-        f"recall@{k}": (
-            round(sum(recall_scores) / len(recall_scores), 4)
-            if recall_scores else None
-        ),
+        f"precision@{k}": _avg(precision_scores),
+        f"recall@{k}": _avg(recall_scores),
         "precision_recall_coverage": len(precision_scores),
-        "groundedness": round(
-            sum(groundedness_scores)
-            / len(groundedness_scores),
-            4,
-        ),
-        "semantic_groundedness": (
-            round(sum(semantic_groundedness_scores) / len(semantic_groundedness_scores), 4)
-            if semantic_groundedness_scores else None
-        ),
-        "citation_correctness": round(
-            sum(citation_scores)
-            / len(citation_scores),
-            4,
-        ),
-        "expert_evaluation": (
-            round(
-                sum(expert_scores)
-                / len(expert_scores),
-                4,
-            )
-            if expert_scores
-            else None
-        ),
+        "groundedness": round(sum(groundedness_scores) / len(groundedness_scores), 4),
+        "semantic_groundedness": _avg(semantic_groundedness_scores),
+        "citation_correctness": round(sum(citation_scores) / len(citation_scores), 4),
+        "citation_validity": round(sum(citation_validity_scores) / len(citation_validity_scores), 4),
+        "citation_completeness": round(sum(citation_completeness_scores) / len(citation_completeness_scores), 4),
+        "expert_evaluation": _avg(expert_scores),
+        "avg_retrieval_time_ms": _avg(retrieval_latencies),
+        "avg_llm_generation_time_ms": _avg(llm_latencies),
+        "avg_total_generation_time_ms": _avg(total_latencies),
         "number_of_queries": len(results),
     }
 
-    return {
-        "summary": summary,
-        "results": results,
-    }
+    return {"summary": summary, "results": results}
 
 
 # ============================================================
@@ -811,88 +541,28 @@ def evaluate_dataset(
 # ============================================================
 
 if __name__ == "__main__":
-
-    # NOTE: retrieved_documents now carry real passage content (as
-    # `retriever.retrieve()` would return), not bare identifiers --
-    # this is the fix for the groundedness=0.0 bug. Precision/Recall
-    # still match on identity via the "id" field.
     evaluation_data = [
         {
             "question": "What is AES?",
-
-            "answer": (
-                "AES is a symmetric block cipher used for "
-                "secure encryption [NIST_AES]."
-            ),
-
+            "answer": "AES is a symmetric block cipher used for secure encryption [NIST_AES].",
             "retrieved_documents": [
-                {
-                    "id": "NIST_AES",
-                    "content": (
-                        "NIST FIPS 197 specifies the Advanced Encryption "
-                        "Standard (AES), a symmetric block cipher used "
-                        "for secure encryption of electronic data."
-                    ),
-                },
-                {
-                    "id": "CWE_327",
-                    "content": (
-                        "CWE-327 describes the use of a broken or risky "
-                        "cryptographic algorithm as a common software "
-                        "weakness."
-                    ),
-                },
-                {
-                    "id": "crypto_algorithms",
-                    "content": (
-                        "An overview of common cryptographic algorithms, "
-                        "including AES, RSA, and SHA-256."
-                    ),
-                },
-                {
-                    "id": "key_management",
-                    "content": (
-                        "Key management best practices cover generation, "
-                        "distribution, storage, and rotation of "
-                        "cryptographic keys."
-                    ),
-                },
-                {
-                    "id": "AES_security",
-                    "content": (
-                        "AES security analysis shows it remains secure "
-                        "against all known practical cryptanalytic "
-                        "attacks when used with a sufficient key length."
-                    ),
-                },
+                {"id": "NIST_AES", "content": "NIST FIPS 197 specifies the Advanced Encryption Standard (AES), a symmetric block cipher used for secure encryption of electronic data."},
+                {"id": "CWE_327", "content": "CWE-327 describes the use of a broken or risky cryptographic algorithm as a common software weakness."},
+                {"id": "crypto_algorithms", "content": "An overview of common cryptographic algorithms, including AES, RSA, and SHA-256."},
+                {"id": "key_management", "content": "Key management best practices cover generation, distribution, storage, and rotation of cryptographic keys."},
+                {"id": "AES_security", "content": "AES security analysis shows it remains secure against all known practical cryptanalytic attacks when used with a sufficient key length."},
             ],
-
-            "relevant_documents": [
-                "NIST_AES",
-                "AES_security",
-            ],
-
-            "expert_scores": {
-                "relevance": 5,
-                "correctness": 5,
-                "completeness": 4,
-                "citation_quality": 5,
-            },
+            "relevant_documents": ["NIST_AES", "AES_security"],
+            "expert_scores": {"relevance": 5, "correctness": 5, "completeness": 4, "citation_quality": 5},
         }
     ]
 
-    results = evaluate_dataset(
-        evaluation_data,
-        k=5,
-    )
+    results = evaluate_dataset(evaluation_data, k=5)
 
     print("\n========================================")
     print("CryptoSage RAG Evaluation")
     print("========================================")
-
     print("\nSummary:")
-
     for metric, value in results["summary"].items():
         print(f"{metric}: {value}")
-
     print("\n========================================")

@@ -14,6 +14,7 @@ similarity score) available for storage/audit.
 from __future__ import annotations
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -82,3 +83,101 @@ def citations_to_reference_strings(citations: list[Citation]) -> list[str]:
     (e.g. `["NIST SP 800-57", "OWASP IoT Top 10 (2018)"]`).
     """
     return [citation.display for citation in citations]
+
+
+# ============================================================
+# SENTENCE/CLAIM-LEVEL CITATION VALIDATION
+# ============================================================
+#
+# Used both by rag/validation.py (to reject an LLM response that cites
+# something never retrieved) and by evaluation. `[LABEL]` markers found
+# in generated text are matched only against citations actually built
+# from *retrieved* metadata -- an LLM cannot make up a label and have
+# it pass.
+
+_CITATION_MARKER_RE = re.compile(r"\[([^\[\]]+)\]")
+
+
+def extract_citation_markers(text: str) -> list[str]:
+    """Pull every `[LABEL]`-style marker out of generated text, in
+    first-seen order, deduplicated. Does not judge validity -- see
+    `validate_citation_markers`.
+    """
+    if not text:
+        return []
+    return list(dict.fromkeys(_CITATION_MARKER_RE.findall(text)))
+
+
+def valid_citation_labels(citations: list[Citation]) -> set[str]:
+    """The set of labels an LLM/template is allowed to cite: each
+    citation's `display` value (what actually appears as `[LABEL]` in
+    prompts/output) plus its raw identifier and title as fallbacks, so
+    a citation is accepted whichever of those the model reproduces.
+    """
+    labels: set[str] = set()
+    for citation in citations:
+        for value in (citation.display, citation.identifier, citation.title):
+            if value:
+                labels.add(value.strip().lower())
+    return labels
+
+
+def validate_citation_markers(text: str, citations: list[Citation]) -> dict[str, Any]:
+    """Check every `[LABEL]` marker in `text` against `citations`
+    (built from the documents actually retrieved for this explanation).
+
+    Returns:
+        {
+            "valid": bool,               # True iff every marker matched
+            "cited_labels": [...],       # markers found in `text`
+            "invalid_labels": [...],     # markers with no matching retrieved source
+            "allowed_labels": [...],     # labels that WOULD have been valid
+        }
+    """
+    allowed = valid_citation_labels(citations)
+    found = extract_citation_markers(text)
+    invalid = [label for label in found if label.strip().lower() not in allowed]
+
+    if invalid:
+        logger.warning("Invalid citation(s) detected: %s. Allowed sources: %s", invalid, sorted(allowed))
+
+    return {
+        "valid": not invalid,
+        "cited_labels": found,
+        "invalid_labels": invalid,
+        "allowed_labels": sorted(allowed),
+    }
+
+
+def sentence_level_citations(text: str, citations: list[Citation]) -> list[dict[str, Any]]:
+    """Split `text` into sentences and report which retrieved citation(s)
+    (if any) each sentence cites, for sentence/claim-level citation
+    display and for the "citation completeness" evaluation metric
+    (does every factual-looking claim carry a citation?).
+
+    A sentence with no `[LABEL]` marker at all is reported with
+    `has_citation=False` and `unsupported=True` only when it does not
+    already contain the deterministic "does not establish" disclaimer
+    the prompt requires for unsupported claims -- such a sentence is
+    intentionally uncited, not missing a citation it should have had.
+    """
+    if not text:
+        return []
+
+    allowed = valid_citation_labels(citations)
+    sentences = [s.strip() for s in re.split(r"(?<=[.!?])\s+", text.strip()) if s.strip()]
+
+    results = []
+    for sentence in sentences:
+        markers = extract_citation_markers(sentence)
+        matched = [m for m in markers if m.strip().lower() in allowed]
+        unmatched = [m for m in markers if m.strip().lower() not in allowed]
+        disclaims = "does not establish" in sentence.lower()
+        results.append({
+            "sentence": sentence,
+            "has_citation": bool(matched),
+            "cited_labels": matched,
+            "invalid_labels": unmatched,
+            "unsupported_disclaimer": disclaims,
+        })
+    return results
