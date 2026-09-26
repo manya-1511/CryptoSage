@@ -16,6 +16,7 @@ pydantic-settings==2.7.1
 python-dotenv==1.0.1
 
 # --- Phase 3: Firmware Input Module dependencies ---
+
 python-multipart==0.0.32
 
 # --- Phase 2A: Offline Dataset Builder dependencies ---
@@ -29,11 +30,22 @@ pandas==3.0.2
 numpy==2.4.4
 
 # --- Phase 4: Firmware Analysis Engine dependencies ---
+
 python-magic==0.4.27
-scikit-learn==1.8.0
+scikit-learn==1.9.0
 shap==0.52.0
 joblib==1.5.3
 matplotlib==3.10.8
 xgboost==3.4.0
-requests==2.32.3
+
+# HTTP / RAG
+requests==2.33.1
 chromadb==1.5.9
+
+# RAG / text processing
+langchain-core==1.5.3
+langchain-protocol==0.0.18
+langchain-text-splitters==1.1.2
+
+# Embeddings
+sentence-transformers==5.7.0
