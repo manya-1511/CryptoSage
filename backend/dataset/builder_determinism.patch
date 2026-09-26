@@ -1,0 +1,33 @@
+--- a/dataset/builder.py
++++ b/dataset/builder.py
+@@ def discover_binaries(source_dir: Path) -> list[Path]:
+         if _is_elf_binary(path):
+             discovered.append(path)
++    # Deterministic ordering: rglob() order is not guaranteed stable
++    # across filesystems/OSes/runs, and downstream dataset-row order
++    # (and duplicate-collision naming in copy_binaries_to_compiled)
++    # should not depend on that.
++    discovered.sort(key=lambda p: str(p.relative_to(source_dir)))
+     logger.info("Discovered %d candidate binaries under %s", len(discovered), source_dir)
+     return discovered
+@@ def discover_algorithm_source_files(source_dir: Path) -> dict[str, list[Path]]:
+         algorithm = _match_algorithm_from_filename(path)
+         if algorithm is None:
+             continue
+
+         grouped.setdefault(algorithm, []).append(path)
+
++    # Deterministic ordering: both the per-algorithm file lists and the
++    # dict's own key order (iterated by run_object_pipeline) must not
++    # depend on rglob()'s OS-dependent traversal order.
++    grouped = {
++        algorithm: sorted(files, key=lambda p: str(p.relative_to(source_dir)))
++        for algorithm, files in sorted(grouped.items())
++    }
++
+     total_files = sum(len(files) for files in grouped.values())
+     logger.info(
+         "Discovered %d candidate algorithm source file(s) across %d algorithm(s) under %s",
+         total_files, len(grouped), source_dir,
+     )
+     return grouped
