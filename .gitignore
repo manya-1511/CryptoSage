@@ -24,7 +24,7 @@ env/
 logs/
 backend/logs/
 backend/ml/logs/
-
+backend/cryptosage_bins/
 # =========================
 # Analysis output
 # =========================
