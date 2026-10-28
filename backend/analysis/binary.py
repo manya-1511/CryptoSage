@@ -72,13 +72,11 @@ IGNORED_EXTENSIONS: set[str] = {
     ".tmp", ".bak", ".log",
 }
 
-
-def _is_ignored_path(relative_path: Path) -> bool:
-    """Return True if any path component matches an ignored-directory keyword."""
-    lowered_parts = [part.lower() for part in relative_path.parts]
+def _is_ignored_path(path: Path) -> bool:
+    """Ignore binaries located inside excluded directories."""
     return any(
-        keyword in part
-        for part in lowered_parts
+        keyword in part.lower()
+        for part in path.parts[:-1]
         for keyword in IGNORED_DIR_KEYWORDS
     )
 

@@ -1,8 +1,13 @@
+
 """
 CryptoSage FastAPI application entrypoint.
 
-Run with:
-uvicorn app:app --reload
+Development:
+    uvicorn app:app --reload
+
+Production:
+    Set ENVIRONMENT=production, DEBUG=False, SECRET_KEY, DATABASE_URL,
+    and CORS_ORIGINS in the deployment environment before starting.
 """
 
 from fastapi import FastAPI
@@ -19,23 +24,12 @@ app = FastAPI(
     debug=settings.DEBUG,
 )
 
-# ---------------------------------------------------------
-# CORS - Allow Next.js frontend running on localhost:3000
-# ---------------------------------------------------------
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=settings.CORS_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# ---------------------------------------------------------
-# Register API routes
-# ---------------------------------------------------------
 
 app.include_router(router)

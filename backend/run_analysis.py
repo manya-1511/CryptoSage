@@ -5,10 +5,10 @@ from analysis.binary import discover_binaries
 from analysis.features import extract_features, save_feature_vector
 
 
-FIRMWARE_ID = 6
+FIRMWARE_ID = 13
 
 BASE_DIR = Path(__file__).resolve().parent
-FIRMWARE_PATH = BASE_DIR / "uploads" / str(FIRMWARE_ID) / "openwrt-24.10.8-ramips-mt7621-belkin_rt1800-squashfs-factory.bin"
+FIRMWARE_PATH = BASE_DIR / "uploads" / str(FIRMWARE_ID) / "ecc_test.bin"
 OUTPUT_ROOT = BASE_DIR / "analysis_output"
 
 

@@ -1,9 +1,9 @@
+
 """
 Database setup for CryptoSage.
 
-Defines the SQLAlchemy engine, session factory, and declarative base used
-throughout the application, along with a FastAPI dependency for obtaining
-a database session per request.
+Defines the SQLAlchemy engine, session factory, declarative base, and
+FastAPI dependency for obtaining a database session per request.
 """
 
 from typing import Generator
@@ -15,24 +15,39 @@ from config import get_settings
 
 settings = get_settings()
 
-# The engine manages the connection pool to the PostgreSQL database.
-engine = create_engine(settings.DATABASE_URL, pool_pre_ping=True)
+engine_options = {
+    "pool_pre_ping": True,
+}
 
-# SessionLocal is a factory for creating new database sessions.
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+# SQLite may use a different pool implementation, so apply the configurable
+# connection-pool settings only to non-SQLite database URLs.
+if not settings.DATABASE_URL.startswith("sqlite"):
+    engine_options.update(
+        {
+            "pool_size": settings.DB_POOL_SIZE,
+            "max_overflow": settings.DB_MAX_OVERFLOW,
+            "pool_timeout": settings.DB_POOL_TIMEOUT_SECONDS,
+            "pool_recycle": settings.DB_POOL_RECYCLE_SECONDS,
+        }
+    )
+
+engine = create_engine(settings.DATABASE_URL, **engine_options)
+
+SessionLocal = sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    bind=engine,
+)
 
 
 class Base(DeclarativeBase):
     """Base class that all SQLAlchemy models inherit from."""
+
     pass
 
 
 def get_db() -> Generator:
-    """FastAPI dependency that provides a database session.
-
-    Yields a session for use within a request and guarantees it is closed
-    afterwards, even if an error occurs.
-    """
+    """Provide a database session and always close it after the request."""
     db = SessionLocal()
     try:
         yield db
