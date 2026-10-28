@@ -1,15 +1,16 @@
+
 """
 Pydantic schemas for CryptoSage.
 
 These define the shape of data used for API request/response validation.
-They mirror the SQLAlchemy models in `models.py` but are kept separate so
-that the database layer and the API layer can evolve independently.
+They mirror the SQLAlchemy models while allowing the database and API
+layers to evolve independently.
 """
 
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class FirmwareBase(BaseModel):
@@ -18,14 +19,13 @@ class FirmwareBase(BaseModel):
     filename: str
     file_hash: str
     file_size: int
-    architecture: Optional[str] = None
-    storage_path: Optional[str] = None
-    status: Optional[str] = "Uploaded"
+    architecture: str | None = None
+    storage_path: str | None = None
+    status: str | None = "Uploaded"
 
 
 class FirmwareCreate(FirmwareBase):
     """Schema used when creating a new firmware record."""
-    pass
 
 
 class Firmware(FirmwareBase):
@@ -38,7 +38,7 @@ class Firmware(FirmwareBase):
 
 
 class FirmwareUploadResponse(BaseModel):
-    """Response returned after a successful, brand-new firmware upload."""
+    """Response for a successful, brand-new firmware upload."""
 
     firmware_id: int
     filename: str
@@ -48,7 +48,7 @@ class FirmwareUploadResponse(BaseModel):
 
 
 class FirmwareDuplicateResponse(BaseModel):
-    """Response returned when an uploaded firmware's SHA-256 already exists."""
+    """Response returned when a firmware hash already exists."""
 
     message: str = "Firmware already exists."
     firmware_id: int
@@ -57,17 +57,17 @@ class FirmwareDuplicateResponse(BaseModel):
 
 
 class FirmwareAnalysisResult(BaseModel):
-    """Result summary for a single analyzed binary executable inside a firmware."""
+    """Summary for a single analyzed binary executable."""
 
     binary_name: str
-    architecture: Optional[str] = None
-    binary_size: Optional[int] = None
+    architecture: str | None = None
+    binary_size: int | None = None
     feature_count: int
     feature_vector_path: str
 
 
 class FirmwareAnalysisResponse(BaseModel):
-    """Response returned after completing firmware analysis (Phase 4)."""
+    """Response returned after firmware analysis."""
 
     firmware_id: int
     status: str
@@ -78,21 +78,21 @@ class FirmwareAnalysisResponse(BaseModel):
     analysis_time_ms: float
 
 
-
 class AnalysisBase(BaseModel):
     """Fields shared when creating or reading an analysis record."""
 
     firmware_id: int
-    algorithm: Optional[str] = None
-    confidence: Optional[float] = None
-    risk_score: Optional[float] = None
-    risk_level: Optional[str] = None
-    recommendation: Optional[str] = None
+    algorithm: str | None = None
+    confidence: float | None = None
+    risk_score: float | None = None
+    risk_level: str | None = None
+    recommendation: list[Any] | None = None
+    risk_factors: list[Any] | None = None
+    analysis_status: str | None = None
 
 
 class AnalysisCreate(AnalysisBase):
     """Schema used when creating a new analysis record."""
-    pass
 
 
 class Analysis(AnalysisBase):
@@ -108,13 +108,14 @@ class ReportBase(BaseModel):
     """Fields shared when creating or reading a report record."""
 
     analysis_id: int
-    rag_explanation: Optional[str] = None
-    pdf_path: Optional[str] = None
+    # JSONB normally stores a structured object. Accept strings as well
+    # to avoid rejecting legacy records or existing string-based callers.
+    rag_explanation: dict[str, Any] | str | None = None
+    pdf_path: str | None = None
 
 
 class ReportCreate(ReportBase):
     """Schema used when creating a new report record."""
-    pass
 
 
 class Report(ReportBase):
@@ -127,20 +128,19 @@ class Report(ReportBase):
 
 
 class UploadedFeaturesBase(BaseModel):
-    """Fields shared when creating or reading an uploaded-features record."""
+    """Fields shared when creating or reading extracted features."""
 
     firmware_id: int
-    feature_vector: Optional[dict[str, Any]] = None
-    similarity_score: Optional[float] = None
+    feature_vector: dict[str, Any] | None = None
+    similarity_score: float | None = None
 
 
 class UploadedFeaturesCreate(UploadedFeaturesBase):
-    """Schema used when creating a new uploaded-features record."""
-    pass
+    """Schema used when creating an uploaded-features record."""
 
 
 class UploadedFeatures(UploadedFeaturesBase):
-    """Schema used when returning an uploaded-features record from the API."""
+    """Schema used when returning an uploaded-features record."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -149,7 +149,7 @@ class UploadedFeatures(UploadedFeaturesBase):
 
 
 class SinglePrediction(BaseModel):
-    """Response for a firmware with exactly one analyzed executable (Phase 6)."""
+    """Response for a firmware with exactly one analyzed executable."""
 
     firmware_id: int
     binary_name: str
@@ -163,7 +163,7 @@ class SinglePrediction(BaseModel):
 
 
 class BinaryPrediction(BaseModel):
-    """One executable's prediction within a multi-binary response (Phase 6)."""
+    """Prediction for one executable in a multi-binary response."""
 
     binary_name: str
     algorithm_family: str
@@ -173,17 +173,17 @@ class BinaryPrediction(BaseModel):
 
 
 class MultiplePredictions(BaseModel):
-    """Response for a firmware with multiple analyzed executables (Phase 6)."""
+    """Response for a firmware with multiple analyzed executables."""
 
     firmware_id: int
     model: str
     model_version: str
     predictions: list[BinaryPrediction]
-    failed: list[dict[str, str]] = []
+    failed: list[dict[str, str]] = Field(default_factory=list)
 
 
 class RiskFactorSchema(BaseModel):
-    """One scored, evidence-backed contributor to a risk assessment (Phase 6/7)."""
+    """One scored, evidence-backed contributor to a risk assessment."""
 
     factor: str
     weight: float
@@ -192,7 +192,7 @@ class RiskFactorSchema(BaseModel):
 
 
 class RiskAssessmentResponse(BaseModel):
-    """Response for a single binary's risk assessment (Phase 6/7)."""
+    """Response for a single binary's risk assessment."""
 
     firmware_id: int
     binary_name: str
@@ -206,15 +206,15 @@ class RiskAssessmentResponse(BaseModel):
 
 
 class MultipleRiskAssessments(BaseModel):
-    """Response for a firmware with multiple assessed executables (Phase 6/7)."""
+    """Response for risk assessments covering multiple executables."""
 
     firmware_id: int
     assessments: list[RiskAssessmentResponse]
-    failed: list[dict[str, str]] = []
+    failed: list[dict[str, str]] = Field(default_factory=list)
 
 
 class ExplanationResponse(BaseModel):
-    """Response for a single binary's evidence-backed RAG explanation (Phase 7)."""
+    """Response for a single binary's RAG explanation."""
 
     firmware_id: int
     binary_name: str
@@ -232,8 +232,8 @@ class ExplanationResponse(BaseModel):
 
 
 class MultipleExplanations(BaseModel):
-    """Response for a firmware with multiple explained executables (Phase 7)."""
+    """Response for explanations covering multiple executables."""
 
     firmware_id: int
     explanations: list[ExplanationResponse]
-    failed: list[dict[str, str]] = []
+    failed: list[dict[str, str]] = Field(default_factory=list)
