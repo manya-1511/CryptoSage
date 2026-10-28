@@ -12,10 +12,12 @@ Defines the core database tables used by the platform:
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String
+
+from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, UniqueConstraint
+
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-
+from sqlalchemy import UniqueConstraint
 from database import Base
 
 
@@ -79,11 +81,24 @@ class Analysis(Base):
     """Represents the result of analyzing a firmware image."""
 
     __tablename__ = "analysis"
+    
+    __table_args__ = (
+        UniqueConstraint(
+            "firmware_id",
+            "binary_key",
+            name="uq_analysis_firmware_binary_key",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
     firmware_id: Mapped[int] = mapped_column(
         ForeignKey("firmware.id"), nullable=False
     )
+    binary_key: Mapped[str | None] = mapped_column(
+        String(1000),
+        nullable=True,
+    )
+
     algorithm: Mapped[str | None] = mapped_column(String(100), nullable=True)
     confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     risk_score: Mapped[float | None] = mapped_column(Float, nullable=True)

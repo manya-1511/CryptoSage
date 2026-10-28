@@ -162,8 +162,10 @@ def ingest_knowledge_base(
 
     knowledge_base_dir = knowledge_base_dir or settings.RAG_KNOWLEDGE_BASE_DIR
     persist_dir = persist_dir or settings.RAG_CHROMA_PERSIST_DIR
-    embedding_backend = embedding_backend or get_embedding_backend()
-
+    embedding_backend = embedding_backend or get_embedding_backend(
+        settings.RAG_EMBEDDING_MODEL,
+        tfidf_persist_path=persist_dir / "tfidf_vectorizer.joblib",
+    )
     logger.info("Knowledge base loading started: %s", knowledge_base_dir)
     documents = discover_documents(knowledge_base_dir)
     if not documents:

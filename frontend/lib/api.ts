@@ -19,16 +19,23 @@ export interface Firmware {
   upload_time: string;
 }
 
-export interface FirmwareUploadResponse extends Firmware {
-  duplicate?: false;
+
+export interface FirmwareUploadResponse {
+  firmware_id: number;
+  filename: string;
+  file_hash: string;
+  file_size: number;
+  status: string;
+  duplicate: false;
 }
 
 export interface FirmwareDuplicateResponse {
-  duplicate: true;
-  id: number;
+  firmware_id: number;
   filename: string;
   file_hash: string;
-  upload_time: string;
+  file_size: number;
+  status: string;
+  duplicate: true;
   message?: string;
 }
 

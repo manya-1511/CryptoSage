@@ -37,6 +37,7 @@ class Firmware(FirmwareBase):
     upload_time: datetime
 
 
+
 class FirmwareUploadResponse(BaseModel):
     """Response for a successful, brand-new firmware upload."""
 
@@ -45,15 +46,20 @@ class FirmwareUploadResponse(BaseModel):
     file_hash: str
     file_size: int
     status: str
+    duplicate: bool = False
 
 
 class FirmwareDuplicateResponse(BaseModel):
     """Response returned when a firmware hash already exists."""
 
-    message: str = "Firmware already exists."
     firmware_id: int
-    sha256: str
+    filename: str
+    file_hash: str
+    file_size: int
     status: str = "Already Uploaded"
+    duplicate: bool = True
+    message: str = "Firmware already exists."
+
 
 
 class FirmwareAnalysisResult(BaseModel):
@@ -182,13 +188,17 @@ class MultiplePredictions(BaseModel):
     failed: list[dict[str, str]] = Field(default_factory=list)
 
 
+
 class RiskFactorSchema(BaseModel):
     """One scored, evidence-backed contributor to a risk assessment."""
 
     factor: str
+    category: str
     weight: float
     contribution: float
     evidence: str
+
+
 
 
 class RiskAssessmentResponse(BaseModel):
@@ -201,8 +211,9 @@ class RiskAssessmentResponse(BaseModel):
     confidence: float
     risk_score: float
     risk_level: str
-    risk_factors: list[str]
+    risk_factors: list[RiskFactorSchema]
     recommendations: list[str]
+
 
 
 class MultipleRiskAssessments(BaseModel):

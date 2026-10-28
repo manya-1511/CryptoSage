@@ -136,6 +136,7 @@ class ModelLoadError(RuntimeError):
     """Raised when the trained model or its supporting artifacts can't be loaded."""
 
 
+
 @dataclass
 class PredictionResult:
     """A single binary's hierarchical prediction, ready to serialize."""
@@ -151,6 +152,7 @@ class PredictionResult:
     prediction_timestamp: str
     family_confidence: float = 0.0
     top_contributing_features: list[dict[str, Any]] = field(default_factory=list)
+    binary_key: str = ""
 
 
 @dataclass
@@ -459,6 +461,7 @@ def predict_single(
         binary_name, family, algorithm, confidence, prediction_time_ms,
     )
 
+    
     return PredictionResult(
         binary_name=binary_name,
         algorithm_family=family,
@@ -471,7 +474,9 @@ def predict_single(
         prediction_timestamp=datetime.now(timezone.utc).isoformat(),
         family_confidence=family_confidence,
         top_contributing_features=top_features,
+        binary_key=str(raw_features.get("_binary_key") or binary_name),
     )
+
 
 
 def predict_batch(
@@ -507,35 +512,74 @@ def predict_batch(
 # Locating feature vectors for a given firmware
 # --------------------------------------------------------------------------
 
+
 def load_feature_vectors_for_firmware(
     firmware_id: int,
     analysis_output_dir: Optional[Path] = None,
 ) -> list[tuple[str, dict[str, Any]]]:
-    """Find and load every `*_feature_vector.json` produced for a firmware.
+    """Find and load feature vectors for one firmware.
 
-    Looks under `<analysis_output_dir>/<firmware_id>/` (recursively).
-    Never raises for an individual unreadable file -- it is logged and
-    skipped.
+    Each feature vector receives `_binary_key`, derived from its relative
+    path under the firmware analysis directory. The key identifies the
+    binary independently of its filename alone.
+
+    Unreadable files are logged and skipped.
     """
     analysis_output_dir = analysis_output_dir or settings.ANALYSIS_OUTPUT_DIR
     firmware_dir = Path(analysis_output_dir) / str(firmware_id)
 
     if not firmware_dir.exists():
-        logger.warning("No analysis output directory found for firmware_id=%s at %s", firmware_id, firmware_dir)
+        logger.warning(
+            "No analysis output directory found for firmware_id=%s at %s",
+            firmware_id,
+            firmware_dir,
+        )
         return []
 
-    feature_vector_paths = sorted(firmware_dir.rglob("*_feature_vector.json"))
-    logger.info("Found %d feature vector file(s) for firmware_id=%s", len(feature_vector_paths), firmware_id)
+    feature_vector_paths = sorted(
+        firmware_dir.rglob("*_feature_vector.json")
+    )
+    logger.info(
+        "Found %d feature vector file(s) for firmware_id=%s",
+        len(feature_vector_paths),
+        firmware_id,
+    )
 
     results: list[tuple[str, dict[str, Any]]] = []
+
     for path in feature_vector_paths:
         try:
             raw_features = json.loads(path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError) as exc:
-            logger.warning("Could not read feature vector %s: %s", path, exc)
+            logger.warning(
+                "Could not read feature vector %s: %s",
+                path,
+                exc,
+            )
             continue
 
-        binary_name = raw_features.get("binary_name") or path.name.removesuffix("_feature_vector.json")
-        results.append((binary_name, raw_features))
+        if not isinstance(raw_features, dict):
+            logger.warning(
+                "Skipping feature vector with invalid JSON structure: %s",
+                path,
+            )
+            continue
+
+        binary_name = (
+            raw_features.get("binary_name")
+            or path.name.removesuffix("_feature_vector.json")
+        )
+
+        relative_feature_path = path.relative_to(firmware_dir)
+        relative_binary_path = relative_feature_path.as_posix().removesuffix(
+            "_feature_vector.json"
+        )
+
+        # Preserve a pre-existing internal identity only if it matches
+        # the path-derived identity; the path remains authoritative.
+        raw_features["_binary_key"] = relative_binary_path
+
+        results.append((str(binary_name), raw_features))
 
     return results
+

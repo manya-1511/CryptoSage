@@ -53,11 +53,17 @@ class RetrieverError(RuntimeError):
     """Raised when the knowledge base collection can't be loaded or queried."""
 
 
-@lru_cache(maxsize=1)
-def _get_embedding_backend_cached() -> EmbeddingBackend:
-    """Load the embedding backend once per process and reuse it."""
-    return get_embedding_backend(settings.RAG_EMBEDDING_MODEL)
+@lru_cache(maxsize=4)
+def _get_embedding_backend_cached(
+    persist_dir: str | None = None,
+) -> EmbeddingBackend:
+    """Load the embedding backend associated with a ChromaDB store."""
+    store_dir = Path(persist_dir) if persist_dir else settings.RAG_CHROMA_PERSIST_DIR
 
+    return get_embedding_backend(
+        settings.RAG_EMBEDDING_MODEL,
+        tfidf_persist_path=store_dir / "tfidf_vectorizer.joblib",
+    )
 
 def get_collection(persist_dir: Optional[Path] = None, embedding_backend: Optional[EmbeddingBackend] = None):
     """Open the persisted ChromaDB knowledge-base collection.
@@ -71,8 +77,9 @@ def get_collection(persist_dir: Optional[Path] = None, embedding_backend: Option
     import chromadb
 
     persist_dir = persist_dir or settings.RAG_CHROMA_PERSIST_DIR
-    embedding_backend = embedding_backend or _get_embedding_backend_cached()
-
+    embedding_backend = embedding_backend or _get_embedding_backend_cached(
+        str(persist_dir)
+    )
     if not persist_dir.exists():
         message = (
             f"Knowledge base is not ingested yet (no ChromaDB store at {persist_dir}). "
@@ -83,12 +90,42 @@ def get_collection(persist_dir: Optional[Path] = None, embedding_backend: Option
 
     try:
         client = chromadb.PersistentClient(path=str(persist_dir))
-        return client.get_collection(name=settings.RAG_COLLECTION_NAME, embedding_function=embedding_backend.embed)
+        collection = client.get_collection(
+            name=settings.RAG_COLLECTION_NAME,
+            embedding_function=embedding_backend.embed,
+        )
     except Exception as exc:  # noqa: BLE001
-        message = f"Could not open knowledge base collection '{settings.RAG_COLLECTION_NAME}': {exc}"
+        message = (
+            f"Could not open knowledge base collection "
+            f"'{settings.RAG_COLLECTION_NAME}': {exc}"
+        )
         logger.error(message)
         raise RetrieverError(message) from exc
+    metadata = collection.metadata or {}
+    stored_backend = metadata.get("embedding_backend")
 
+    if not stored_backend:
+        raise RetrieverError(
+            "Knowledge base collection has no embedding_backend metadata. "
+            "Re-ingest the knowledge base using the configured embedding backend."
+        )
+
+    if stored_backend != embedding_backend.name:
+        raise RetrieverError(
+            "Embedding backend mismatch: "
+            f"collection uses '{stored_backend}', but the active backend is "
+            f"'{embedding_backend.name}'. Re-ingest the knowledge base."
+        )
+
+    if embedding_backend.is_fallback and not getattr(
+        embedding_backend.embed, "_fitted", False
+    ):
+        raise RetrieverError(
+            "The TF-IDF vectorizer is missing or unfitted for this knowledge "
+            "base store. Re-ingest the knowledge base before retrieving."
+        )
+
+    return collection
 
 def build_retrieval_query(
     algorithm: str,
@@ -230,7 +267,8 @@ def retrieve(
     candidate_k = candidate_k or settings.RAG_CANDIDATE_K
     candidate_k = max(candidate_k, top_k)  # candidate pool must be >= final depth
 
-    embedding_backend = _get_embedding_backend_cached()
+    store_dir = persist_dir or settings.RAG_CHROMA_PERSIST_DIR
+    embedding_backend = _get_embedding_backend_cached(str(store_dir))
     collection = get_collection(persist_dir, embedding_backend)
 
     query_text = apply_query_instruction(query, embedding_backend)

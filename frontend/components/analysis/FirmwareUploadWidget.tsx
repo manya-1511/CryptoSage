@@ -138,11 +138,11 @@ export default function FirmwareUploadWidget() {
         // Already-uploaded firmware — go straight to explain, which will
         // fall back to analyze if this particular firmware was never
         // actually analyzed before.
-        await runExplainPipeline(uploadData.id, { skipAnalyze: true });
+        await runExplainPipeline(uploadData.firmware_id, { skipAnalyze: true });
         return;
       }
 
-      await runExplainPipeline(uploadData.id);
+      await runExplainPipeline(uploadData.firmware_id);
     } catch (err) {
       setError(getErrorMessage(err));
       setStage("error");

@@ -203,6 +203,7 @@ def _finalize_storage(
     return relative_path
 
 
+
 def handle_firmware_upload(
     upload_file: UploadFile,
     db: Session,
@@ -218,9 +219,8 @@ def handle_firmware_upload(
         upload_file.file
     )
 
-    # This finally block cleans up temporary files on validation, database,
-    # duplicate, or finalization failures. If the file has already been moved,
-    # the temporary path no longer exists and unlink(missing_ok=True) is safe.
+    firmware: Firmware | None = None
+
     try:
         validate_not_empty(file_size)
         validate_max_size(file_size)
@@ -231,10 +231,14 @@ def handle_firmware_upload(
                 "Duplicate firmware detected: firmware_id=%d.",
                 existing_firmware.id,
             )
+            
             return FirmwareDuplicateResponse(
                 firmware_id=existing_firmware.id,
-                sha256=existing_firmware.file_hash,
+                filename=existing_firmware.filename,
+                file_hash=existing_firmware.file_hash,
+                file_size=existing_firmware.file_size,
             )
+
 
         firmware = _create_firmware_record(
             db,
@@ -243,12 +247,28 @@ def handle_firmware_upload(
             file_size,
         )
 
-        _finalize_storage(db, firmware, temp_path, filename)
+        try:
+            _finalize_storage(db, firmware, temp_path, filename)
+        except Exception:
+            # The row was committed before the file was finalized.
+            # Remove it to avoid leaving an incomplete upload record.
+            db.rollback()
+            try:
+                db.delete(firmware)
+                db.commit()
+            except SQLAlchemyError:
+                db.rollback()
+                logger.exception(
+                    "Could not clean up firmware record after storage "
+                    "finalization failed: firmware_id=%d",
+                    firmware.id,
+                )
+            raise
 
         logger.info(
             "Upload completed: firmware_id=%d, filename=%s",
             firmware.id,
-            filename,
+            firmware.filename,
         )
 
         return FirmwareUploadResponse(

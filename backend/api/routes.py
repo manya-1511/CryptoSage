@@ -163,33 +163,44 @@ def analyze_firmware_endpoint(
         )
 
 
+def _get_or_create_analysis(
+    db: Session,
+    firmware_id: int,
+    prediction: PredictionResult,
+) -> Analysis:
+    """Return the canonical analysis row for one firmware binary."""
+    binary_key = prediction.binary_key or prediction.binary_name
 
-def _store_prediction(db: Session, firmware_id: int, algorithm: str, confidence: float) -> None:
-    """Insert one `analysis` row for a single binary's prediction.
+    analysis_row = (
+        db.query(Analysis)
+        .filter(
+            Analysis.firmware_id == firmware_id,
+            Analysis.binary_key == binary_key,
+        )
+        .one_or_none()
+    )
 
-    Only `algorithm`, `confidence`, and `analysis_time` are populated --
-    risk scoring and recommendations belong to later phases. A failure
-    to store one prediction is logged and does not prevent the API
-    response from still reporting that prediction to the caller.
-    """
-    try:
+    if analysis_row is None:
         analysis_row = Analysis(
             firmware_id=firmware_id,
-            algorithm=algorithm,
-            confidence=confidence,
+            binary_key=binary_key,
+            algorithm=prediction.algorithm,
+            confidence=prediction.confidence,
         )
         db.add(analysis_row)
-        db.commit()
-        logger.info(
-            "Database update completed: firmware_id=%d, algorithm=%s, confidence=%.2f",
-            firmware_id, algorithm, confidence,
-        )
-    except SQLAlchemyError as exc:
-        db.rollback()
-        logger.error(
-            "Database update failed for firmware_id=%d, algorithm=%s: %s",
-            firmware_id, algorithm, exc,
-        )
+
+    return analysis_row
+
+def _store_prediction(
+    db: Session,
+    firmware_id: int,
+    prediction: PredictionResult,
+) -> Analysis:
+    """Update the canonical row with the latest ML prediction."""
+    analysis_row = _get_or_create_analysis(db, firmware_id, prediction)
+    analysis_row.algorithm = prediction.algorithm
+    analysis_row.confidence = prediction.confidence
+    return analysis_row
 
 
 @router.post(
@@ -259,9 +270,22 @@ def predict_firmware(
             detail={"message": "No valid predictions could be generated.", "failures": failures},
         )
 
-    for result in results:
-        _store_prediction(db, firmware_id, result.algorithm, result.confidence)
+    try:
+        for result in results:
+            _store_prediction(db, firmware_id, result)
 
+        db.commit()
+
+    except SQLAlchemyError:
+        db.rollback()
+        logger.exception(
+            "Failed to persist predictions for firmware_id=%d",
+            firmware_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to save prediction results.",
+        )
     if len(results) == 1 and not failures:
         result = results[0]
         return SinglePrediction(
@@ -318,39 +342,33 @@ def _store_risk_assessment(
     prediction: PredictionResult,
     risk_assessment: RiskAssessment,
     recommendations: list[str],
-) -> None:
-    """Insert one `analysis` row with the full prediction + risk + recommendation result.
+) -> Analysis:
+    """Update the canonical row with risk and recommendation data."""
+    analysis_row = _get_or_create_analysis(db, firmware_id, prediction)
 
-    A database failure is logged and does not prevent the API response
-    from still reporting the assessment to the caller.
-    """
-    try:
-        analysis_row = Analysis(
-            firmware_id=firmware_id,
-            algorithm=prediction.algorithm,
-            confidence=prediction.confidence,
-            risk_score=risk_assessment.risk_score,
-            risk_level=risk_assessment.risk_level,
-            recommendation=recommendations,
-            risk_factors=[
-                {"factor": rf.factor, "weight": rf.weight, "contribution": rf.contribution}
-                for rf in risk_assessment.risk_factors
-                if rf.contribution > 0
-            ],
-            analysis_status=AnalysisStatus.COMPLETED,
-        )
-        db.add(analysis_row)
-        db.commit()
-        logger.info(
-            "Database update completed: firmware_id=%d, algorithm=%s, risk_score=%.2f, risk_level=%s",
-            firmware_id, prediction.algorithm, risk_assessment.risk_score, risk_assessment.risk_level,
-        )
-    except SQLAlchemyError as exc:
-        db.rollback()
-        logger.error(
-            "Database update failed for firmware_id=%d, algorithm=%s: %s",
-            firmware_id, prediction.algorithm, exc,
-        )
+    analysis_row.algorithm = prediction.algorithm
+    analysis_row.confidence = prediction.confidence
+    analysis_row.risk_score = risk_assessment.risk_score
+    analysis_row.risk_level = risk_assessment.risk_level
+    analysis_row.recommendation = recommendations
+    analysis_row.risk_factors = [
+        {
+            "factor": factor.factor,
+            "category": factor.category,
+            "weight": factor.weight,
+            "contribution": factor.contribution,
+            "evidence": factor.evidence,
+        }
+        for factor in risk_assessment.risk_factors
+        if factor.contribution > 0
+    ]
+    analysis_row.analysis_status = AnalysisStatus.COMPLETED
+
+    return analysis_row
+
+
+
+
 
 
 @router.post(
@@ -359,22 +377,25 @@ def _store_risk_assessment(
     summary="Run ML prediction, risk assessment, and recommendations for a firmware",
 )
 def assess_firmware_risk(
-    firmware_id: int, db: Session = Depends(get_db)
+    firmware_id: int,
+    db: Session = Depends(get_db),
 ) -> RiskAssessmentResponse | MultipleRiskAssessments:
-    """Run the full Phase 6/7 pipeline for an already-analyzed firmware.
+    """Run prediction, deterministic risk assessment, and recommendations.
 
-    Workflow: firmware lookup -> ML prediction (family + algorithm,
-    reusing `ml.predict`) -> deterministic, weighted risk assessment
-    (`ml.risk` -- no ML model involved) -> rule-based recommendations
-    (`ml.recommend` -- no AI/LLM involved) -> store the full result in
-    the `analysis` table -> return it.
-
-    Expects `feature_vector.json` file(s) to already exist for this
-    firmware under `ANALYSIS_OUTPUT_DIR/<firmware_id>/` (Phase 4). Does
-    not upload firmware, run Binwalk, extract features, or retrain the
-    model.
+    Feature vectors must already exist under ANALYSIS_OUTPUT_DIR/<firmware_id>/.
+    This endpoint does not upload or extract firmware.
     """
-    firmware = db.query(Firmware).filter(Firmware.id == firmware_id).first()
+    if firmware_id <= 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail="firmware_id must be a positive integer.",
+        )
+
+    firmware = (
+        db.query(Firmware)
+        .filter(Firmware.id == firmware_id)
+        .first()
+    )
     if firmware is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -382,9 +403,15 @@ def assess_firmware_risk(
         )
 
     try:
-        feature_vectors = load_feature_vectors_for_firmware(firmware_id, settings.ANALYSIS_OUTPUT_DIR)
+        feature_vectors = load_feature_vectors_for_firmware(
+            firmware_id,
+            settings.ANALYSIS_OUTPUT_DIR,
+        )
     except Exception:
-        logger.exception("Unexpected error while locating feature vectors for firmware_id=%d", firmware_id)
+        logger.exception(
+            "Failed to load feature vectors for firmware_id=%d",
+            firmware_id,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred while locating analysis results.",
@@ -394,39 +421,74 @@ def assess_firmware_risk(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=(
-                "No analysis results found for this firmware. Run the Firmware "
-                "Analysis Engine before requesting a risk assessment."
+                "No analysis results found for this firmware. Run the "
+                "Firmware Analysis Engine before requesting a risk assessment."
             ),
         )
 
     try:
         predictions, prediction_failures = predict_batch(feature_vectors)
-    except ModelLoadError as exc:
-        logger.error("Model artifacts could not be loaded: %s", exc)
+    except ModelLoadError:
+        logger.exception(
+            "Prediction model unavailable for firmware_id=%d",
+            firmware_id,
+        )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="The prediction model is not currently available.",
         )
     except Exception:
-        logger.exception("Unexpected error during prediction for firmware_id=%d", firmware_id)
+        logger.exception(
+            "Unexpected prediction error for firmware_id=%d",
+            firmware_id,
+        )
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="An unexpected error occurred while generating predictions.",
         )
 
-    feature_vectors_by_name = dict(feature_vectors)
-    firmware_age_days = (datetime.now(timezone.utc) - firmware.upload_time).days if firmware.upload_time else None
+    if not predictions:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+            detail={
+                "message": "No valid predictions could be generated.",
+                "failures": prediction_failures,
+            },
+        )
+
+    feature_vectors_by_key = {
+        str(features.get("_binary_key") or binary_name): features
+        for binary_name, features in feature_vectors
+    }
+
+    firmware_age_days = (
+        (datetime.now(timezone.utc) - firmware.upload_time).days
+        if firmware.upload_time
+        else None
+    )
     firmware_metadata = {"age_days": firmware_age_days}
 
     assessments: list[RiskAssessmentResponse] = []
     failures = list(prediction_failures)
 
     for prediction in predictions:
-        raw_feature_vector = feature_vectors_by_name.get(prediction.binary_name, {})
-        binary_path = _find_binary_path(settings.ANALYSIS_OUTPUT_DIR, firmware_id, prediction.binary_name)
-        binary_metadata = parse_elf(binary_path) if binary_path is not None else None
+        binary_key = prediction.binary_key or prediction.binary_name
+        raw_feature_vector = feature_vectors_by_key.get(binary_key, {})
+
+        binary_path = (
+            settings.ANALYSIS_OUTPUT_DIR
+            / str(firmware_id)
+            / binary_key
+        )
+        binary_path = binary_path if binary_path.is_file() else None
 
         try:
+            binary_metadata = (
+                parse_elf(binary_path)
+                if binary_path is not None
+                else None
+            )
+
             risk_assessment = assess_risk(
                 firmware_id=firmware_id,
                 algorithm=prediction.algorithm,
@@ -436,73 +498,136 @@ def assess_firmware_risk(
                 binary_metadata=binary_metadata,
                 firmware_metadata=firmware_metadata,
             )
-            recommendations = generate_recommendations(risk_assessment.risk_factors, prediction.algorithm)
-        except (RiskConfigError, RecommendationConfigError) as exc:
-            logger.error("Risk configuration error for binary '%s': %s", prediction.binary_name, exc)
+
+            recommendations = generate_recommendations(
+                risk_assessment.risk_factors,
+                prediction.algorithm,
+            )
+
+        except (RiskConfigError, RecommendationConfigError):
+            logger.exception(
+                "Risk/recommendation configuration error for binary '%s'",
+                prediction.binary_name,
+            )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Risk assessment configuration is invalid or unavailable.",
             )
         except ValueError as exc:
-            logger.error("Risk assessment input error for binary '%s': %s", prediction.binary_name, exc)
-            failures.append({"binary_name": prediction.binary_name, "error": str(exc)})
+            logger.warning(
+                "Invalid risk assessment input for binary '%s': %s",
+                prediction.binary_name,
+                exc,
+            )
+            failures.append(
+                {
+                    "binary_name": prediction.binary_name,
+                    "error": str(exc),
+                }
+            )
             continue
         except Exception:
-            logger.exception("Unexpected error assessing risk for binary '%s'", prediction.binary_name)
-            failures.append({"binary_name": prediction.binary_name, "error": "Unexpected risk assessment error."})
+            logger.exception(
+                "Unexpected risk assessment error for binary '%s'",
+                prediction.binary_name,
+            )
+            failures.append(
+                {
+                    "binary_name": prediction.binary_name,
+                    "error": "Unexpected risk assessment error.",
+                }
+            )
             continue
 
-        _store_risk_assessment(db, firmware_id, prediction, risk_assessment, recommendations)
+        try:
+            _store_risk_assessment(
+                db,
+                firmware_id,
+                prediction,
+                risk_assessment,
+                recommendations,
+            )
+        except SQLAlchemyError:
+            db.rollback()
+            logger.exception(
+                "Failed to persist risk assessment for firmware_id=%d, binary=%s",
+                firmware_id,
+                prediction.binary_name,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to save risk assessment results.",
+            )
 
-        assessments.append(RiskAssessmentResponse(
-            firmware_id=firmware_id,
-            binary_name=prediction.binary_name,
-            algorithm_family=prediction.algorithm_family,
-            algorithm=prediction.algorithm,
-            confidence=prediction.confidence,
-            risk_score=risk_assessment.risk_score,
-            risk_level=risk_assessment.risk_level,
-            risk_factors=[rf.factor for rf in risk_assessment.risk_factors if rf.contribution > 0],
-            recommendations=recommendations,
-        ))
+        assessments.append(
+            RiskAssessmentResponse(
+                firmware_id=firmware_id,
+                binary_name=prediction.binary_name,
+                algorithm_family=prediction.algorithm_family,
+                algorithm=prediction.algorithm,
+                confidence=prediction.confidence,
+                risk_score=risk_assessment.risk_score,
+                risk_level=risk_assessment.risk_level,
+                risk_factors=[
+                    factor.factor
+                    for factor in risk_assessment.risk_factors
+                    if factor.contribution > 0
+                ],
+                recommendations=recommendations,
+            )
+        )
 
     if not assessments:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
-            detail={"message": "No valid risk assessments could be generated.", "failures": failures},
+            detail={
+                "message": "No valid risk assessments could be generated.",
+                "failures": failures,
+            },
+        )
+
+    try:
+        db.commit()
+    except SQLAlchemyError:
+        db.rollback()
+        logger.exception(
+            "Failed to commit risk assessments for firmware_id=%d",
+            firmware_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to save risk assessment results.",
         )
 
     if len(assessments) == 1 and not failures:
         return assessments[0]
 
-    return MultipleRiskAssessments(firmware_id=firmware_id, assessments=assessments, failed=failures)
+    return MultipleRiskAssessments(
+        firmware_id=firmware_id,
+        assessments=assessments,
+        failed=failures,
+    )
 
 
-def _store_explanation_report(db: Session, analysis_id: int, explanation: ExplanationResult) -> None:
-    """Insert one `reports` row with the full RAG explanation, retrieved
-    documents, citations, and generation time.
-
-    A database failure is logged and does not prevent the API response
-    from still reporting the explanation to the caller.
-    """
-    try:
-        report_row = Report(
-            analysis_id=analysis_id,
-            rag_explanation={
-                "summary": explanation.summary,
-                "sections": explanation.sections,
-                "references": explanation.references,
-                "retrieved_documents": explanation.retrieved_documents,
-                "generated_by": explanation.generated_by,
-                "generation_time_ms": explanation.generation_time_ms,
-            },
-        )
-        db.add(report_row)
-        db.commit()
-        logger.info("Database update completed: analysis_id=%d, report stored.", analysis_id)
-    except SQLAlchemyError as exc:
-        db.rollback()
-        logger.error("Database update failed storing report for analysis_id=%d: %s", analysis_id, exc)
+def _store_explanation_report(
+    db: Session,
+    analysis_id: int,
+    explanation: ExplanationResult,
+) -> Report:
+    """Stage a report for the current transaction; do not commit here."""
+    report_row = Report(
+        analysis_id=analysis_id,
+        rag_explanation={
+            "summary": explanation.summary,
+            "sections": explanation.sections,
+            "references": explanation.references,
+            "retrieved_documents": explanation.retrieved_documents,
+            "generated_by": explanation.generated_by,
+            "generation_time_ms": explanation.generation_time_ms,
+        },
+    )
+    db.add(report_row)
+    return report_row
 
 
 @router.post(
@@ -628,26 +753,36 @@ def explain_firmware_endpoint(
             logger.exception("Unexpected error explaining binary '%s'", prediction.binary_name)
             failures.append({"binary_name": prediction.binary_name, "error": "Unexpected explanation error."})
             continue
-
-        analysis_row = Analysis(
-            firmware_id=firmware_id,
-            algorithm=prediction.algorithm,
-            confidence=prediction.confidence,
-            risk_score=risk_assessment.risk_score,
-            risk_level=risk_assessment.risk_level,
-            recommendation=recommendations,
-            risk_factors=risk_factor_dicts,
-            analysis_status=AnalysisStatus.COMPLETED,
-        )
         try:
-            db.add(analysis_row)
-            db.commit()
-            db.refresh(analysis_row)
-            _store_explanation_report(db, analysis_row.id, explanation)
-        except SQLAlchemyError as exc:
-            db.rollback()
-            logger.error("Database update failed for firmware_id=%d: %s", firmware_id, exc)
+            analysis_row = _store_risk_assessment(
+                db,
+                firmware_id,
+                prediction,
+                risk_assessment,
+                recommendations,
+            )
 
+            db.flush()  # Assign analysis_row.id without committing.
+
+            _store_explanation_report(
+                db,
+                analysis_row.id,
+                explanation,
+            )
+
+            db.commit()
+
+        except SQLAlchemyError:
+            db.rollback()
+            logger.exception(
+                "Failed to persist explanation for firmware_id=%d, binary=%s",
+                firmware_id,
+                prediction.binary_name,
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to save the explanation report.",
+            )
         explanations.append(ExplanationResponse(
             firmware_id=firmware_id,
             binary_name=prediction.binary_name,

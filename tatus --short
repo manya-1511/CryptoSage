@@ -1,0 +1,1029 @@
+backend/analysis/pipeline.py:1: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:7: trailing whitespace.
+[32m+[m[32mWorkflow:[m[41m[m
+backend/analysis/pipeline.py:8: trailing whitespace.
+[32m+[m[32m  1. Resolve the uploaded firmware source.[m[41m[m
+backend/analysis/pipeline.py:9: trailing whitespace.
+[32m+[m[32m  2. Acquire a per-firmware execution lock.[m[41m[m
+backend/analysis/pipeline.py:10: trailing whitespace.
+[32m+[m[32m  3. Extract into a unique directory for this run.[m[41m[m
+backend/analysis/pipeline.py:11: trailing whitespace.
+[32m+[m[32m  4. Discover binaries from fresh extraction output, or from the[m[41m[m
+backend/analysis/pipeline.py:12: trailing whitespace.
+[32m+[m[32m     original-firmware copy if Binwalk fails.[m[41m[m
+backend/analysis/pipeline.py:13: trailing whitespace.
+[32m+[m[32m  5. Extract features independently for each discovered binary.[m[41m[m
+backend/analysis/pipeline.py:14: trailing whitespace.
+[32m+[m[32m  6. Publish successful run artifacts and replace feature rows atomically.[m[41m[m
+backend/analysis/pipeline.py:15: trailing whitespace.
+[32m+[m[32m  7. Persist the final lifecycle status.[m[41m[m
+backend/analysis/pipeline.py:16: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:17: trailing whitespace.
+[32m+[m[32mA successful Binwalk execution alone does not constitute a successful[m[41m[m
+backend/analysis/pipeline.py:18: trailing whitespace.
+[32m+[m[32manalysis. At least one binary must have its features extracted and saved.[m[41m[m
+backend/analysis/pipeline.py:24: trailing whitespace.
+[32m+[m[32mimport os[m[41m[m
+backend/analysis/pipeline.py:25: trailing whitespace.
+[32m+[m[32mimport shutil[m[41m[m
+backend/analysis/pipeline.py:26: trailing whitespace.
+[32m+[m[32mimport threading[m[41m[m
+backend/analysis/pipeline.py:28: trailing whitespace.
+[32m+[m[32mimport uuid[m[41m[m
+backend/analysis/pipeline.py:29: trailing whitespace.
+[32m+[m[32mfrom contextlib import contextmanager[m[41m[m
+backend/analysis/pipeline.py:31: trailing whitespace.
+[32m+[m[32mfrom typing import Iterator, Optional[m[41m[m
+backend/analysis/pipeline.py:34: trailing whitespace.
+[32m+[m[32mfrom sqlalchemy import text[m[41m[m
+backend/analysis/pipeline.py:35: trailing whitespace.
+[32m+[m[32mfrom database import engine[m[41m[m
+backend/analysis/pipeline.py:48: trailing whitespace.
+[32m+[m[32m# PostgreSQL session-level advisory lock namespace. Keep this constant[m[41m[m
+backend/analysis/pipeline.py:49: trailing whitespace.
+[32m+[m[32m# stable across application workers.[m[41m[m
+backend/analysis/pipeline.py:50: trailing whitespace.
+[32m+[m[32m_ADVISORY_LOCK_NAMESPACE = 731204[m[41m[m
+backend/analysis/pipeline.py:51: trailing whitespace.
+[32m+[m[32m_local_locks_guard = threading.Lock()[m[41m[m
+backend/analysis/pipeline.py:52: trailing whitespace.
+[32m+[m[32m_local_firmware_locks: dict[int, threading.Lock] = {}[m[41m[m
+backend/analysis/pipeline.py:53: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:54: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:55: trailing whitespace.
+[32m+[m[32mdef _get_local_lock(firmware_id: int) -> threading.Lock:[m[41m[m
+backend/analysis/pipeline.py:56: trailing whitespace.
+[32m+[m[32m    """Get a process-local fallback lock for non-PostgreSQL databases."""[m[41m[m
+backend/analysis/pipeline.py:57: trailing whitespace.
+[32m+[m[32m    with _local_locks_guard:[m[41m[m
+backend/analysis/pipeline.py:58: trailing whitespace.
+[32m+[m[32m        lock = _local_firmware_locks.get(firmware_id)[m[41m[m
+backend/analysis/pipeline.py:59: trailing whitespace.
+[32m+[m[32m        if lock is None:[m[41m[m
+backend/analysis/pipeline.py:60: trailing whitespace.
+[32m+[m[32m            lock = threading.Lock()[m[41m[m
+backend/analysis/pipeline.py:61: trailing whitespace.
+[32m+[m[32m            _local_firmware_locks[firmware_id] = lock[m[41m[m
+backend/analysis/pipeline.py:62: trailing whitespace.
+[32m+[m[32m        return lock[m[41m[m
+backend/analysis/pipeline.py:66: trailing whitespace.
+[32m+[m[32m@contextmanager[m[41m[m
+backend/analysis/pipeline.py:67: trailing whitespace.
+[32m+[m[32mdef _firmware_run_lock([m[41m[m
+backend/analysis/pipeline.py:68: trailing whitespace.
+[32m+[m[32m    db: Session,[m[41m[m
+backend/analysis/pipeline.py:69: trailing whitespace.
+[32m+[m[32m    firmware_id: int,[m[41m[m
+backend/analysis/pipeline.py:70: trailing whitespace.
+[32m+[m[32m) -> Iterator[None]:[m[41m[m
+backend/analysis/pipeline.py:72: trailing whitespace.
+[32m+[m[32m    Prevent overlapping analysis runs for the same firmware.[m[41m[m
+backend/analysis/pipeline.py:74: trailing whitespace.
+[32m+[m[32m    PostgreSQL uses a dedicated connection held for the entire run.[m[41m[m
+backend/analysis/pipeline.py:75: trailing whitespace.
+[32m+[m[32m    The connection is not managed by the ORM Session, so ORM commits[m[41m[m
+backend/analysis/pipeline.py:76: trailing whitespace.
+[32m+[m[32m    cannot return the lock-holding connection to the pool prematurely.[m[41m[m
+backend/analysis/pipeline.py:78: trailing whitespace.
+[32m+[m[32m    Other database dialects use a process-local fallback only.[m[41m[m
+backend/analysis/pipeline.py:79: trailing whitespace.
+[32m+[m[32m    """[m[41m[m
+backend/analysis/pipeline.py:80: trailing whitespace.
+[32m+[m[32m    dialect_name = db.get_bind().dialect.name[m[41m[m
+backend/analysis/pipeline.py:82: trailing whitespace.
+[32m+[m[32m    if dialect_name == "postgresql":[m[41m[m
+backend/analysis/pipeline.py:83: trailing whitespace.
+[32m+[m[32m        lock_connection = engine.connect()[m[41m[m
+backend/analysis/pipeline.py:85: trailing whitespace.
+[32m+[m[32m        try:[m[41m[m
+backend/analysis/pipeline.py:86: trailing whitespace.
+[32m+[m[32m            acquired = lock_connection.execute([m[41m[m
+backend/analysis/pipeline.py:87: trailing whitespace.
+[32m+[m[32m                text([m[41m[m
+backend/analysis/pipeline.py:88: trailing whitespace.
+[32m+[m[32m                    "SELECT pg_try_advisory_lock("[m[41m[m
+backend/analysis/pipeline.py:89: trailing whitespace.
+[32m+[m[32m                    ":namespace, :firmware_id)"[m[41m[m
+backend/analysis/pipeline.py:90: trailing whitespace.
+[32m+[m[32m                ),[m[41m[m
+backend/analysis/pipeline.py:91: trailing whitespace.
+[32m+[m[32m                {[m[41m[m
+backend/analysis/pipeline.py:92: trailing whitespace.
+[32m+[m[32m                    "namespace": _ADVISORY_LOCK_NAMESPACE,[m[41m[m
+backend/analysis/pipeline.py:93: trailing whitespace.
+[32m+[m[32m                    "firmware_id": firmware_id,[m[41m[m
+backend/analysis/pipeline.py:94: trailing whitespace.
+[32m+[m[32m                },[m[41m[m
+backend/analysis/pipeline.py:95: trailing whitespace.
+[32m+[m[32m            ).scalar_one()[m[41m[m
+backend/analysis/pipeline.py:96: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:97: trailing whitespace.
+[32m+[m[32m            # End the SQL transaction, but retain the connection.[m[41m[m
+backend/analysis/pipeline.py:98: trailing whitespace.
+[32m+[m[32m            # PostgreSQL session-level advisory locks survive commits.[m[41m[m
+backend/analysis/pipeline.py:99: trailing whitespace.
+[32m+[m[32m            lock_connection.commit()[m[41m[m
+backend/analysis/pipeline.py:100: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:101: trailing whitespace.
+[32m+[m[32m            if not acquired:[m[41m[m
+backend/analysis/pipeline.py:102: trailing whitespace.
+[32m+[m[32m                raise HTTPException([m[41m[m
+backend/analysis/pipeline.py:103: trailing whitespace.
+[32m+[m[32m                    status_code=status.HTTP_409_CONFLICT,[m[41m[m
+backend/analysis/pipeline.py:104: trailing whitespace.
+[32m+[m[32m                    detail="Analysis is already running for this firmware.",[m[41m[m
+backend/analysis/pipeline.py:105: trailing whitespace.
+[32m+[m[32m                )[m[41m[m
+backend/analysis/pipeline.py:107: trailing whitespace.
+[32m+[m[32m            try:[m[41m[m
+backend/analysis/pipeline.py:108: trailing whitespace.
+[32m+[m[32m                yield[m[41m[m
+backend/analysis/pipeline.py:109: trailing whitespace.
+[32m+[m[32m            finally:[m[41m[m
+backend/analysis/pipeline.py:110: trailing whitespace.
+[32m+[m[32m                try:[m[41m[m
+backend/analysis/pipeline.py:111: trailing whitespace.
+[32m+[m[32m                    released = lock_connection.execute([m[41m[m
+backend/analysis/pipeline.py:112: trailing whitespace.
+[32m+[m[32m                        text([m[41m[m
+backend/analysis/pipeline.py:113: trailing whitespace.
+[32m+[m[32m                            "SELECT pg_advisory_unlock("[m[41m[m
+backend/analysis/pipeline.py:114: trailing whitespace.
+[32m+[m[32m                            ":namespace, :firmware_id)"[m[41m[m
+backend/analysis/pipeline.py:115: trailing whitespace.
+[32m+[m[32m                        ),[m[41m[m
+backend/analysis/pipeline.py:116: trailing whitespace.
+[32m+[m[32m                        {[m[41m[m
+backend/analysis/pipeline.py:117: trailing whitespace.
+[32m+[m[32m                            "namespace": _ADVISORY_LOCK_NAMESPACE,[m[41m[m
+backend/analysis/pipeline.py:118: trailing whitespace.
+[32m+[m[32m                            "firmware_id": firmware_id,[m[41m[m
+backend/analysis/pipeline.py:119: trailing whitespace.
+[32m+[m[32m                        },[m[41m[m
+backend/analysis/pipeline.py:120: trailing whitespace.
+[32m+[m[32m                    ).scalar_one()[m[41m[m
+backend/analysis/pipeline.py:121: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:122: trailing whitespace.
+[32m+[m[32m                    lock_connection.commit()[m[41m[m
+backend/analysis/pipeline.py:123: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:124: trailing whitespace.
+[32m+[m[32m                    if not released:[m[41m[m
+backend/analysis/pipeline.py:125: trailing whitespace.
+[32m+[m[32m                        logger.error([m[41m[m
+backend/analysis/pipeline.py:126: trailing whitespace.
+[32m+[m[32m                            "PostgreSQL advisory lock was not held when "[m[41m[m
+backend/analysis/pipeline.py:127: trailing whitespace.
+[32m+[m[32m                            "releasing firmware_id=%d",[m[41m[m
+backend/analysis/pipeline.py:128: trailing whitespace.
+[32m+[m[32m                            firmware_id,[m[41m[m
+backend/analysis/pipeline.py:129: trailing whitespace.
+[32m+[m[32m                        )[m[41m[m
+backend/analysis/pipeline.py:130: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:131: trailing whitespace.
+[32m+[m[32m                except Exception:[m[41m[m
+backend/analysis/pipeline.py:132: trailing whitespace.
+[32m+[m[32m                    lock_connection.rollback()[m[41m[m
+backend/analysis/pipeline.py:133: trailing whitespace.
+[32m+[m[32m                    logger.exception([m[41m[m
+backend/analysis/pipeline.py:134: trailing whitespace.
+[32m+[m[32m                        "Failed to release advisory lock for firmware_id=%d",[m[41m[m
+backend/analysis/pipeline.py:135: trailing whitespace.
+[32m+[m[32m                        firmware_id,[m[41m[m
+backend/analysis/pipeline.py:136: trailing whitespace.
+[32m+[m[32m                    )[m[41m[m
+backend/analysis/pipeline.py:137: trailing whitespace.
+[32m+[m[32m                    raise[m[41m[m
+backend/analysis/pipeline.py:138: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:139: trailing whitespace.
+[32m+[m[32m        finally:[m[41m[m
+backend/analysis/pipeline.py:140: trailing whitespace.
+[32m+[m[32m            lock_connection.close()[m[41m[m
+backend/analysis/pipeline.py:141: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:142: trailing whitespace.
+[32m+[m[32m    else:[m[41m[m
+backend/analysis/pipeline.py:143: trailing whitespace.
+[32m+[m[32m        lock = _get_local_lock(firmware_id)[m[41m[m
+backend/analysis/pipeline.py:144: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:145: trailing whitespace.
+[32m+[m[32m        if not lock.acquire(blocking=False):[m[41m[m
+backend/analysis/pipeline.py:146: trailing whitespace.
+[32m+[m[32m            raise HTTPException([m[41m[m
+backend/analysis/pipeline.py:147: trailing whitespace.
+[32m+[m[32m                status_code=status.HTTP_409_CONFLICT,[m[41m[m
+backend/analysis/pipeline.py:148: trailing whitespace.
+[32m+[m[32m                detail="Analysis is already running for this firmware.",[m[41m[m
+backend/analysis/pipeline.py:149: trailing whitespace.
+[32m+[m[32m            )[m[41m[m
+backend/analysis/pipeline.py:150: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:151: trailing whitespace.
+[32m+[m[32m        try:[m[41m[m
+backend/analysis/pipeline.py:152: trailing whitespace.
+[32m+[m[32m            yield[m[41m[m
+backend/analysis/pipeline.py:153: trailing whitespace.
+[32m+[m[32m        finally:[m[41m[m
+backend/analysis/pipeline.py:154: trailing whitespace.
+[32m+[m[32m            lock.release()[m[41m[m
+backend/analysis/pipeline.py:156: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:157: trailing whitespace.
+[32m+[m[32mdef _resolve_firmware_path(storage_path: str) -> Path:[m[41m[m
+backend/analysis/pipeline.py:158: trailing whitespace.
+[32m+[m[32m    """Resolve a stored firmware path without exposing it in API errors."""[m[41m[m
+backend/analysis/pipeline.py:159: trailing whitespace.
+[32m+[m[32m    path = Path(storage_path)[m[41m[m
+backend/analysis/pipeline.py:160: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:161: trailing whitespace.
+[32m+[m[32m    if not path.is_absolute():[m[41m[m
+backend/analysis/pipeline.py:162: trailing whitespace.
+[32m+[m[32m        path = Path(settings.UPLOAD_DIR) / path[m[41m[m
+backend/analysis/pipeline.py:163: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:164: trailing whitespace.
+[32m+[m[32m    return path.resolve()[m[41m[m
+backend/analysis/pipeline.py:165: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:166: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:167: trailing whitespace.
+[32m+[m[32mdef _archive_existing_output([m[41m[m
+backend/analysis/pipeline.py:168: trailing whitespace.
+[32m+[m[32m    final_dir: Path,[m[41m[m
+backend/analysis/pipeline.py:169: trailing whitespace.
+[32m+[m[32m    archive_dir: Path,[m[41m[m
+backend/analysis/pipeline.py:170: trailing whitespace.
+[32m+[m[32m) -> bool:[m[41m[m
+backend/analysis/pipeline.py:171: trailing whitespace.
+[32m+[m[32m    """[m[41m[m
+backend/analysis/pipeline.py:172: trailing whitespace.
+[32m+[m[32m    Move existing published artifacts out of the canonical output path.[m[41m[m
+backend/analysis/pipeline.py:173: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:174: trailing whitespace.
+[32m+[m[32m    Returns True when an existing directory was moved. The caller can[m[41m[m
+backend/analysis/pipeline.py:175: trailing whitespace.
+[32m+[m[32m    restore it if publishing or the database transaction fails.[m[41m[m
+backend/analysis/pipeline.py:176: trailing whitespace.
+[32m+[m[32m    """[m[41m[m
+backend/analysis/pipeline.py:177: trailing whitespace.
+[32m+[m[32m    if not final_dir.exists():[m[41m[m
+backend/analysis/pipeline.py:178: trailing whitespace.
+[32m+[m[32m        return False[m[41m[m
+backend/analysis/pipeline.py:179: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:180: trailing whitespace.
+[32m+[m[32m    archive_dir.parent.mkdir(parents=True, exist_ok=True)[m[41m[m
+backend/analysis/pipeline.py:181: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:182: trailing whitespace.
+[32m+[m[32m    if archive_dir.exists():[m[41m[m
+backend/analysis/pipeline.py:183: trailing whitespace.
+[32m+[m[32m        shutil.rmtree(archive_dir)[m[41m[m
+backend/analysis/pipeline.py:184: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:185: trailing whitespace.
+[32m+[m[32m    os.replace(final_dir, archive_dir)[m[41m[m
+backend/analysis/pipeline.py:186: trailing whitespace.
+[32m+[m[32m    return True[m[41m[m
+backend/analysis/pipeline.py:187: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:188: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:189: trailing whitespace.
+[32m+[m[32mdef _restore_archived_output([m[41m[m
+backend/analysis/pipeline.py:190: trailing whitespace.
+[32m+[m[32m    final_dir: Path,[m[41m[m
+backend/analysis/pipeline.py:191: trailing whitespace.
+[32m+[m[32m    archive_dir: Path,[m[41m[m
+backend/analysis/pipeline.py:192: trailing whitespace.
+[32m+[m[32m    had_previous_output: bool,[m[41m[m
+backend/analysis/pipeline.py:193: trailing whitespace.
+[32m+[m[32m) -> None:[m[41m[m
+backend/analysis/pipeline.py:194: trailing whitespace.
+[32m+[m[32m    """Restore previously published artifacts after a failed publication."""[m[41m[m
+backend/analysis/pipeline.py:195: trailing whitespace.
+[32m+[m[32m    if final_dir.exists():[m[41m[m
+backend/analysis/pipeline.py:196: trailing whitespace.
+[32m+[m[32m        shutil.rmtree(final_dir)[m[41m[m
+backend/analysis/pipeline.py:197: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:198: trailing whitespace.
+[32m+[m[32m    if had_previous_output and archive_dir.exists():[m[41m[m
+backend/analysis/pipeline.py:199: trailing whitespace.
+[32m+[m[32m        final_dir.parent.mkdir(parents=True, exist_ok=True)[m[41m[m
+backend/analysis/pipeline.py:200: trailing whitespace.
+[32m+[m[32m        os.replace(archive_dir, final_dir)[m[41m[m
+backend/analysis/pipeline.py:201: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:202: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:203: trailing whitespace.
+[32m+[m[32mdef _remove_directory(path: Path) -> None:[m[41m[m
+backend/analysis/pipeline.py:204: trailing whitespace.
+[32m+[m[32m    """Remove a run directory without masking the primary error."""[m[41m[m
+backend/analysis/pipeline.py:206: trailing whitespace.
+[32m+[m[32m        if path.exists():[m[41m[m
+backend/analysis/pipeline.py:207: trailing whitespace.
+[32m+[m[32m            shutil.rmtree(path)[m[41m[m
+backend/analysis/pipeline.py:208: trailing whitespace.
+[32m+[m[32m    except OSError:[m[41m[m
+backend/analysis/pipeline.py:209: trailing whitespace.
+[32m+[m[32m        logger.warning([m[41m[m
+backend/analysis/pipeline.py:210: trailing whitespace.
+[32m+[m[32m            "Could not remove temporary analysis directory: %s",[m[41m[m
+backend/analysis/pipeline.py:211: trailing whitespace.
+[32m+[m[32m            path,[m[41m[m
+backend/analysis/pipeline.py:212: trailing whitespace.
+[32m+[m[32m            exc_info=True,[m[41m[m
+backend/analysis/pipeline.py:213: trailing whitespace.
+[32m+[m[32m        )[m[41m[m
+backend/analysis/pipeline.py:216: trailing whitespace.
+[32m+[m[32mdef run_firmware_analysis([m[41m[m
+backend/analysis/pipeline.py:217: trailing whitespace.
+[32m+[m[32m    firmware_id: int,[m[41m[m
+backend/analysis/pipeline.py:218: trailing whitespace.
+[32m+[m[32m    db: Session,[m[41m[m
+backend/analysis/pipeline.py:219: trailing whitespace.
+[32m+[m[32m) -> FirmwareAnalysisResponse:[m[41m[m
+backend/analysis/pipeline.py:220: trailing whitespace.
+[32m+[m[32m    """[m[41m[m
+backend/analysis/pipeline.py:221: trailing whitespace.
+[32m+[m[32m    Run firmware extraction, binary discovery, and feature extraction.[m[41m[m
+backend/analysis/pipeline.py:223: trailing whitespace.
+[32m+[m[32m    A run is considered successful only when at least one binary has[m[41m[m
+backend/analysis/pipeline.py:224: trailing whitespace.
+[32m+[m[32m    been analyzed and its feature vector has been saved successfully.[m[41m[m
+backend/analysis/pipeline.py:225: trailing whitespace.
+[32m+[m[32m    """[m[41m[m
+backend/analysis/pipeline.py:226: trailing whitespace.
+[32m+[m[32m    start_time = time.perf_counter()[m[41m[m
+backend/analysis/pipeline.py:227: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:228: trailing whitespace.
+[32m+[m[32m    output_root = Path(settings.ANALYSIS_OUTPUT_DIR).resolve()[m[41m[m
+backend/analysis/pipeline.py:229: trailing whitespace.
+[32m+[m[32m    run_id = uuid.uuid4().hex[m[41m[m
+backend/analysis/pipeline.py:230: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:231: trailing whitespace.
+[32m+[m[32m    # A unique output root prevents a retry from reusing files left by[m[41m[m
+backend/analysis/pipeline.py:232: trailing whitespace.
+[32m+[m[32m    # an earlier attempt for the same firmware.[m[41m[m
+backend/analysis/pipeline.py:233: trailing whitespace.
+[32m+[m[32m    run_root = output_root / ".runs" / str(firmware_id) / run_id[m[41m[m
+backend/analysis/pipeline.py:234: trailing whitespace.
+[32m+[m[32m    staged_output_dir = run_root / str(firmware_id)[m[41m[m
+backend/analysis/pipeline.py:235: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:236: trailing whitespace.
+[32m+[m[32m    final_output_dir = output_root / str(firmware_id)[m[41m[m
+backend/analysis/pipeline.py:237: trailing whitespace.
+[32m+[m[32m    archive_dir = ([m[41m[m
+backend/analysis/pipeline.py:238: trailing whitespace.
+[32m+[m[32m        output_root[m[41m[m
+backend/analysis/pipeline.py:239: trailing whitespace.
+[32m+[m[32m        / ".archive"[m[41m[m
+backend/analysis/pipeline.py:240: trailing whitespace.
+[32m+[m[32m        / str(firmware_id)[m[41m[m
+backend/analysis/pipeline.py:241: trailing whitespace.
+[32m+[m[32m        / run_id[m[41m[m
+backend/analysis/pipeline.py:242: trailing whitespace.
+[32m+[m[32m        / "previous_output"[m[41m[m
+backend/analysis/pipeline.py:243: trailing whitespace.
+[32m+[m[32m    )[m[41m[m
+backend/analysis/pipeline.py:244: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:245: trailing whitespace.
+[32m+[m[32m    with _firmware_run_lock(db, firmware_id):[m[41m[m
+backend/analysis/pipeline.py:246: trailing whitespace.
+[32m+[m[32m        firmware = ([m[41m[m
+backend/analysis/pipeline.py:247: trailing whitespace.
+[32m+[m[32m            db.query(Firmware)[m[41m[m
+backend/analysis/pipeline.py:248: trailing whitespace.
+[32m+[m[32m            .filter(Firmware.id == firmware_id)[m[41m[m
+backend/analysis/pipeline.py:249: trailing whitespace.
+[32m+[m[32m            .with_for_update()[m[41m[m
+backend/analysis/pipeline.py:250: trailing whitespace.
+[32m+[m[32m            .first()[m[41m[m
+backend/analysis/pipeline.py:251: trailing whitespace.
+[32m+[m[32m        )[m[41m[m
+backend/analysis/pipeline.py:252: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:253: trailing whitespace.
+[32m+[m[32m        if firmware is None:[m[41m[m
+backend/analysis/pipeline.py:254: trailing whitespace.
+[32m+[m[32m            raise HTTPException([m[41m[m
+backend/analysis/pipeline.py:255: trailing whitespace.
+[32m+[m[32m                status_code=status.HTTP_404_NOT_FOUND,[m[41m[m
+backend/analysis/pipeline.py:256: trailing whitespace.
+[32m+[m[32m                detail=f"Firmware with id {firmware_id} was not found.",[m[41m[m
+backend/analysis/pipeline.py:257: trailing whitespace.
+[32m+[m[32m            )[m[41m[m
+backend/analysis/pipeline.py:258: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:259: trailing whitespace.
+[32m+[m[32m        if not firmware.storage_path:[m[41m[m
+backend/analysis/pipeline.py:260: trailing whitespace.
+[32m+[m[32m            raise HTTPException([m[41m[m
+backend/analysis/pipeline.py:261: trailing whitespace.
+[32m+[m[32m                status_code=status.HTTP_400_BAD_REQUEST,[m[41m[m
+backend/analysis/pipeline.py:262: trailing whitespace.
+[32m+[m[32m                detail="No storage path is recorded for this firmware.",[m[41m[m
+backend/analysis/pipeline.py:263: trailing whitespace.
+[32m+[m[32m            )[m[41m[m
+backend/analysis/pipeline.py:266: trailing whitespace.
+[32m+[m[32m            file_path = _resolve_firmware_path(firmware.storage_path)[m[41m[m
+backend/analysis/pipeline.py:267: trailing whitespace.
+[32m+[m[32m        except (OSError, RuntimeError, ValueError) as exc:[m[41m[m
+backend/analysis/pipeline.py:268: trailing whitespace.
+[32m+[m[32m            logger.warning([m[41m[m
+backend/analysis/pipeline.py:269: trailing whitespace.
+[32m+[m[32m                "Could not resolve source path for firmware_id=%d: %s",[m[41m[m
+backend/analysis/pipeline.py:270: trailing whitespace.
+[32m+[m[32m                firmware_id,[m[41m[m
+backend/analysis/pipeline.py:271: trailing whitespace.
+[32m+[m[32m                exc,[m[41m[m
+backend/analysis/pipeline.py:272: trailing whitespace.
+[32m+[m[32m            )[m[41m[m
+backend/analysis/pipeline.py:273: trailing whitespace.
+[32m+[m[32m            raise HTTPException([m[41m[m
+backend/analysis/pipeline.py:274: trailing whitespace.
+[32m+[m[32m                status_code=status.HTTP_400_BAD_REQUEST,[m[41m[m
+backend/analysis/pipeline.py:275: trailing whitespace.
+[32m+[m[32m                detail="The stored firmware path is invalid.",[m[41m[m
+backend/analysis/pipeline.py:276: trailing whitespace.
+[32m+[m[32m            ) from exc[m[41m[m
+backend/analysis/pipeline.py:277: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:278: trailing whitespace.
+[32m+[m[32m        if not file_path.is_file():[m[41m[m
+backend/analysis/pipeline.py:279: trailing whitespace.
+[32m+[m[32m            logger.error([m[41m[m
+backend/analysis/pipeline.py:280: trailing whitespace.
+[32m+[m[32m                "Firmware source is missing for firmware_id=%d",[m[41m[m
+backend/analysis/pipeline.py:281: trailing whitespace.
+[32m+[m[32m                firmware_id,[m[41m[m
+backend/analysis/pipeline.py:282: trailing whitespace.
+[32m+[m[32m            )[m[41m[m
+backend/analysis/pipeline.py:283: trailing whitespace.
+[32m+[m[32m            raise HTTPException([m[41m[m
+backend/analysis/pipeline.py:284: trailing whitespace.
+[32m+[m[32m                status_code=status.HTTP_404_NOT_FOUND,[m[41m[m
+backend/analysis/pipeline.py:285: trailing whitespace.
+[32m+[m[32m                detail="The uploaded firmware file could not be found.",[m[41m[m
+backend/analysis/pipeline.py:286: trailing whitespace.
+[32m+[m[32m            )[m[41m[m
+backend/analysis/pipeline.py:288: trailing whitespace.
+[32m+[m[32m        # Persist the initial transition. A database failure must stop[m[41m[m
+backend/analysis/pipeline.py:289: trailing whitespace.
+[32m+[m[32m        # the run; continuing would make the lifecycle unreliable.[m[41m[m
+backend/analysis/pipeline.py:290: trailing whitespace.
+[32m+[m[32m        firmware.status = FirmwareStatus.EXTRACTING[m[41m[m
+backend/analysis/pipeline.py:292: trailing whitespace.
+[32m+[m[32m        try:[m[41m[m
+backend/analysis/pipeline.py:293: trailing whitespace.
+[32m+[m[32m            db.add(firmware)[m[41m[m
+backend/analysis/pipeline.py:294: trailing whitespace.
+[32m+[m[32m            db.commit()[m[41m[m
+backend/analysis/pipeline.py:295: trailing whitespace.
+[32m+[m[32m            db.refresh(firmware)[m[41m[m
+backend/analysis/pipeline.py:296: trailing whitespace.
+[32m+[m[32m        except Exception as exc:[m[41m[m
+backend/analysis/pipeline.py:297: trailing whitespace.
+[32m+[m[32m            db.rollback()[m[41m[m
+backend/analysis/pipeline.py:298: trailing whitespace.
+[32m+[m[32m            logger.exception([m[41m[m
+backend/analysis/pipeline.py:299: trailing whitespace.
+[32m+[m[32m                "Could not set EXTRACTING status for firmware_id=%d",[m[41m[m
+backend/analysis/pipeline.py:300: trailing whitespace.
+[32m+[m[32m                firmware_id,[m[41m[m
+backend/analysis/pipeline.py:301: trailing whitespace.
+[32m+[m[32m            )[m[41m[m
+backend/analysis/pipeline.py:302: trailing whitespace.
+[32m+[m[32m            raise HTTPException([m[41m[m
+backend/analysis/pipeline.py:303: trailing whitespace.
+[32m+[m[32m                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,[m[41m[m
+backend/analysis/pipeline.py:304: trailing whitespace.
+[32m+[m[32m                detail="Could not start firmware analysis.",[m[41m[m
+backend/analysis/pipeline.py:305: trailing whitespace.
+[32m+[m[32m            ) from exc[m[41m[m
+backend/analysis/pipeline.py:307: trailing whitespace.
+[32m+[m[32m        try:[m[41m[m
+backend/analysis/pipeline.py:308: trailing whitespace.
+[32m+[m[32m            output_root.mkdir(parents=True, exist_ok=True)[m[41m[m
+backend/analysis/pipeline.py:309: trailing whitespace.
+[32m+[m[32m            run_root.mkdir(parents=True, exist_ok=False)[m[41m[m
+backend/analysis/pipeline.py:311: trailing whitespace.
+[32m+[m[32m            extraction_result = extract_firmware([m[41m[m
+backend/analysis/pipeline.py:312: trailing whitespace.
+[32m+[m[32m                firmware_path=file_path,[m[41m[m
+backend/analysis/pipeline.py:314: trailing whitespace.
+[32m+[m[32m                output_root=run_root,[m[41m[m
+backend/analysis/pipeline.py:317: trailing whitespace.
+[32m+[m[32m            if extraction_result.output_dir is None:[m[41m[m
+backend/analysis/pipeline.py:318: trailing whitespace.
+[32m+[m[32m                # No isolated directory means there is no safe directory[m[41m[m
+backend/analysis/pipeline.py:319: trailing whitespace.
+[32m+[m[32m                # to inspect. Do not fall back to the canonical output.[m[41m[m
+backend/analysis/pipeline.py:320: trailing whitespace.
+[32m+[m[32m                discovered_binaries = [][m[41m[m
+backend/analysis/pipeline.py:321: trailing whitespace.
+[32m+[m[32m                extraction_message = extraction_result.message[m[41m[m
+backend/analysis/pipeline.py:322: trailing whitespace.
+[32m+[m[32m            else:[m[41m[m
+backend/analysis/pipeline.py:323: trailing whitespace.
+[32m+[m[32m                output_dir = extraction_result.output_dir[m[41m[m
+backend/analysis/pipeline.py:324: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:325: trailing whitespace.
+[32m+[m[32m                # When Binwalk fails, inspect only the fresh copy of the[m[41m[m
+backend/analysis/pipeline.py:326: trailing whitespace.
+[32m+[m[32m                # original upload. Do not analyze potentially incomplete[m[41m[m
+backend/analysis/pipeline.py:327: trailing whitespace.
+[32m+[m[32m                # extraction artifacts from the failed attempt.[m[41m[m
+backend/analysis/pipeline.py:328: trailing whitespace.
+[32m+[m[32m                discovery_root = ([m[41m[m
+backend/analysis/pipeline.py:329: trailing whitespace.
+[32m+[m[32m                    output_dir[m[41m[m
+backend/analysis/pipeline.py:330: trailing whitespace.
+[32m+[m[32m                    if extraction_result.success[m[41m[m
+backend/analysis/pipeline.py:331: trailing whitespace.
+[32m+[m[32m                    else output_dir / "original"[m[41m[m
+backend/analysis/pipeline.py:332: trailing whitespace.
+[32m+[m[32m                )[m[41m[m
+backend/analysis/pipeline.py:334: trailing whitespace.
+[32m+[m[32m                firmware.status = FirmwareStatus.ANALYZING[m[41m[m
+backend/analysis/pipeline.py:335: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:336: trailing whitespace.
+[32m+[m[32m                try:[m[41m[m
+backend/analysis/pipeline.py:337: trailing whitespace.
+[32m+[m[32m                    db.add(firmware)[m[41m[m
+backend/analysis/pipeline.py:338: trailing whitespace.
+[32m+[m[32m                    db.commit()[m[41m[m
+backend/analysis/pipeline.py:339: trailing whitespace.
+[32m+[m[32m                    db.refresh(firmware)[m[41m[m
+backend/analysis/pipeline.py:340: trailing whitespace.
+[32m+[m[32m                except Exception as exc:[m[41m[m
+backend/analysis/pipeline.py:341: trailing whitespace.
+[32m+[m[32m                    db.rollback()[m[41m[m
+backend/analysis/pipeline.py:342: trailing whitespace.
+[32m+[m[32m                    logger.exception([m[41m[m
+backend/analysis/pipeline.py:343: trailing whitespace.
+[32m+[m[32m                        "Could not set ANALYZING status for firmware_id=%d",[m[41m[m
+backend/analysis/pipeline.py:344: trailing whitespace.
+[32m+[m[32m                        firmware_id,[m[41m[m
+backend/analysis/pipeline.py:345: trailing whitespace.
+[32m+[m[32m                    )[m[41m[m
+backend/analysis/pipeline.py:346: trailing whitespace.
+[32m+[m[32m                    raise HTTPException([m[41m[m
+backend/analysis/pipeline.py:347: trailing whitespace.
+[32m+[m[32m                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,[m[41m[m
+backend/analysis/pipeline.py:348: trailing whitespace.
+[32m+[m[32m                        detail="Could not update the analysis lifecycle status.",[m[41m[m
+backend/analysis/pipeline.py:349: trailing whitespace.
+[32m+[m[32m                    ) from exc[m[41m[m
+backend/analysis/pipeline.py:350: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:351: trailing whitespace.
+[32m+[m[32m                discovered_binaries = discover_binaries(discovery_root)[m[41m[m
+backend/analysis/pipeline.py:352: trailing whitespace.
+[32m+[m[32m                extraction_message = extraction_result.message[m[41m[m
+backend/analysis/pipeline.py:353: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:354: trailing whitespace.
+[32m+[m[32m            logger.info([m[41m[m
+backend/analysis/pipeline.py:355: trailing whitespace.
+[32m+[m[32m                "Discovered %d binaries for firmware_id=%d",[m[41m[m
+backend/analysis/pipeline.py:356: trailing whitespace.
+[32m+[m[32m                len(discovered_binaries),[m[41m[m
+backend/analysis/pipeline.py:357: trailing whitespace.
+[32m+[m[32m                firmware_id,[m[41m[m
+backend/analysis/pipeline.py:358: trailing whitespace.
+[32m+[m[32m            )[m[41m[m
+backend/analysis/pipeline.py:359: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:360: trailing whitespace.
+[32m+[m[32m            analyzed_results: list[FirmwareAnalysisResult] = [][m[41m[m
+backend/analysis/pipeline.py:361: trailing whitespace.
+[32m+[m[32m            new_feature_rows: list[UploadedFeatures] = [][m[41m[m
+backend/analysis/pipeline.py:362: trailing whitespace.
+[32m+[m[32m            primary_architecture: Optional[str] = None[m[41m[m
+backend/analysis/pipeline.py:363: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:364: trailing whitespace.
+[32m+[m[32m            for binary_path in discovered_binaries:[m[41m[m
+backend/analysis/pipeline.py:365: trailing whitespace.
+[32m+[m[32m                try:[m[41m[m
+backend/analysis/pipeline.py:366: trailing whitespace.
+[32m+[m[32m                    features = extract_features(binary_path)[m[41m[m
+backend/analysis/pipeline.py:367: trailing whitespace.
+[32m+[m[32m                    features["binary_name"] = binary_path.name[m[41m[m
+backend/analysis/pipeline.py:368: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:369: trailing whitespace.
+[32m+[m[32m                    architecture = features.get("architecture")[m[41m[m
+backend/analysis/pipeline.py:370: trailing whitespace.
+[32m+[m[32m                    if architecture and not primary_architecture:[m[41m[m
+backend/analysis/pipeline.py:371: trailing whitespace.
+[32m+[m[32m                        primary_architecture = architecture[m[41m[m
+backend/analysis/pipeline.py:372: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:373: trailing whitespace.
+[32m+[m[32m                    vector_path = ([m[41m[m
+backend/analysis/pipeline.py:374: trailing whitespace.
+[32m+[m[32m                        binary_path.parent[m[41m[m
+backend/analysis/pipeline.py:375: trailing whitespace.
+[32m+[m[32m                        / f"{binary_path.stem}_feature_vector.json"[m[41m[m
+backend/analysis/pipeline.py:376: trailing whitespace.
+[32m+[m[32m                    )[m[41m[m
+backend/analysis/pipeline.py:377: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:378: trailing whitespace.
+[32m+[m[32m                    save_feature_vector(features, vector_path)[m[41m[m
+backend/analysis/pipeline.py:379: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:380: trailing whitespace.
+[32m+[m[32m                    # Stage the ORM objects in memory. Old feature records[m[41m[m
+backend/analysis/pipeline.py:381: trailing whitespace.
+[32m+[m[32m                    # are not deleted until at least one binary succeeds.[m[41m[m
+backend/analysis/pipeline.py:382: trailing whitespace.
+[32m+[m[32m                    new_feature_rows.append([m[41m[m
+backend/analysis/pipeline.py:383: trailing whitespace.
+[32m+[m[32m                        UploadedFeatures([m[41m[m
+backend/analysis/pipeline.py:384: trailing whitespace.
+[32m+[m[32m                            firmware_id=firmware_id,[m[41m[m
+backend/analysis/pipeline.py:385: trailing whitespace.
+[32m+[m[32m                            feature_vector=features,[m[41m[m
+backend/analysis/pipeline.py:386: trailing whitespace.
+[32m+[m[32m                        )[m[41m[m
+backend/analysis/pipeline.py:387: trailing whitespace.
+[32m+[m[32m                    )[m[41m[m
+backend/analysis/pipeline.py:388: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:389: trailing whitespace.
+[32m+[m[32m                    feature_count = sum([m[41m[m
+backend/analysis/pipeline.py:390: trailing whitespace.
+[32m+[m[32m                        1[m[41m[m
+backend/analysis/pipeline.py:391: trailing whitespace.
+[32m+[m[32m                        for value in features.values()[m[41m[m
+backend/analysis/pipeline.py:392: trailing whitespace.
+[32m+[m[32m                        if value is not None[m[41m[m
+backend/analysis/pipeline.py:393: trailing whitespace.
+[32m+[m[32m                    )[m[41m[m
+backend/analysis/pipeline.py:394: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:395: trailing whitespace.
+[32m+[m[32m                    analyzed_results.append([m[41m[m
+backend/analysis/pipeline.py:396: trailing whitespace.
+[32m+[m[32m                        FirmwareAnalysisResult([m[41m[m
+backend/analysis/pipeline.py:397: trailing whitespace.
+[32m+[m[32m                            binary_name=binary_path.name,[m[41m[m
+backend/analysis/pipeline.py:398: trailing whitespace.
+[32m+[m[32m                            architecture=architecture,[m[41m[m
+backend/analysis/pipeline.py:399: trailing whitespace.
+[32m+[m[32m                            binary_size=features.get("binary_size"),[m[41m[m
+backend/analysis/pipeline.py:400: trailing whitespace.
+[32m+[m[32m                            feature_count=feature_count,[m[41m[m
+backend/analysis/pipeline.py:401: trailing whitespace.
+[32m+[m[32m                            feature_vector_path=str(vector_path),[m[41m[m
+backend/analysis/pipeline.py:402: trailing whitespace.
+[32m+[m[32m                        )[m[41m[m
+backend/analysis/pipeline.py:403: trailing whitespace.
+[32m+[m[32m                    )[m[41m[m
+backend/analysis/pipeline.py:404: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:405: trailing whitespace.
+[32m+[m[32m                except Exception:[m[41m[m
+backend/analysis/pipeline.py:406: trailing whitespace.
+[32m+[m[32m                    logger.exception([m[41m[m
+backend/analysis/pipeline.py:407: trailing whitespace.
+[32m+[m[32m                        "Failed to analyze binary %s for firmware_id=%d",[m[41m[m
+backend/analysis/pipeline.py:408: trailing whitespace.
+[32m+[m[32m                        binary_path,[m[41m[m
+backend/analysis/pipeline.py:409: trailing whitespace.
+[32m+[m[32m                        firmware_id,[m[41m[m
+backend/analysis/pipeline.py:410: trailing whitespace.
+[32m+[m[32m                    )[m[41m[m
+backend/analysis/pipeline.py:411: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:412: trailing whitespace.
+[32m+[m[32m            # A successful Binwalk run with zero analyzable binaries is[m[41m[m
+backend/analysis/pipeline.py:413: trailing whitespace.
+[32m+[m[32m            # not a completed firmware analysis.[m[41m[m
+backend/analysis/pipeline.py:414: trailing whitespace.
+[32m+[m[32m            if not analyzed_results:[m[41m[m
+backend/analysis/pipeline.py:415: trailing whitespace.
+[32m+[m[32m                firmware.status = FirmwareStatus.FAILED[m[41m[m
+backend/analysis/pipeline.py:416: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:417: trailing whitespace.
+[32m+[m[32m                try:[m[41m[m
+backend/analysis/pipeline.py:418: trailing whitespace.
+[32m+[m[32m                    db.add(firmware)[m[41m[m
+backend/analysis/pipeline.py:419: trailing whitespace.
+[32m+[m[32m                    db.commit()[m[41m[m
+backend/analysis/pipeline.py:420: trailing whitespace.
+[32m+[m[32m                    db.refresh(firmware)[m[41m[m
+backend/analysis/pipeline.py:421: trailing whitespace.
+[32m+[m[32m                except Exception as exc:[m[41m[m
+backend/analysis/pipeline.py:422: trailing whitespace.
+[32m+[m[32m                    db.rollback()[m[41m[m
+backend/analysis/pipeline.py:423: trailing whitespace.
+[32m+[m[32m                    logger.exception([m[41m[m
+backend/analysis/pipeline.py:424: trailing whitespace.
+[32m+[m[32m                        "Could not persist FAILED status for firmware_id=%d",[m[41m[m
+backend/analysis/pipeline.py:425: trailing whitespace.
+[32m+[m[32m                        firmware_id,[m[41m[m
+backend/analysis/pipeline.py:426: trailing whitespace.
+[32m+[m[32m                    )[m[41m[m
+backend/analysis/pipeline.py:427: trailing whitespace.
+[32m+[m[32m                    raise HTTPException([m[41m[m
+backend/analysis/pipeline.py:428: trailing whitespace.
+[32m+[m[32m                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,[m[41m[m
+backend/analysis/pipeline.py:429: trailing whitespace.
+[32m+[m[32m                        detail="Analysis failed and its final status could not be saved.",[m[41m[m
+backend/analysis/pipeline.py:430: trailing whitespace.
+[32m+[m[32m                    ) from exc[m[41m[m
+backend/analysis/pipeline.py:431: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:432: trailing whitespace.
+[32m+[m[32m                return FirmwareAnalysisResponse([m[41m[m
+backend/analysis/pipeline.py:433: trailing whitespace.
+[32m+[m[32m                    firmware_id=firmware_id,[m[41m[m
+backend/analysis/pipeline.py:434: trailing whitespace.
+[32m+[m[32m                    status=firmware.status,[m[41m[m
+backend/analysis/pipeline.py:435: trailing whitespace.
+[32m+[m[32m                    extraction_success=extraction_result.success,[m[41m[m
+backend/analysis/pipeline.py:436: trailing whitespace.
+[32m+[m[32m                    extraction_message=extraction_message,[m[41m[m
+backend/analysis/pipeline.py:437: trailing whitespace.
+[32m+[m[32m                    binaries_discovered=len(discovered_binaries),[m[41m[m
+backend/analysis/pipeline.py:438: trailing whitespace.
+[32m+[m[32m                    analyzed_binaries=[],[m[41m[m
+backend/analysis/pipeline.py:439: trailing whitespace.
+[32m+[m[32m                    analysis_time_ms=round([m[41m[m
+backend/analysis/pipeline.py:440: trailing whitespace.
+[32m+[m[32m                        (time.perf_counter() - start_time) * 1000,[m[41m[m
+backend/analysis/pipeline.py:441: trailing whitespace.
+[32m+[m[32m                        2,[m[41m[m
+backend/analysis/pipeline.py:442: trailing whitespace.
+[32m+[m[32m                    ),[m[41m[m
+backend/analysis/pipeline.py:444: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:445: trailing whitespace.
+[32m+[m[32m            # All feature files and records were produced in the isolated[m[41m[m
+backend/analysis/pipeline.py:446: trailing whitespace.
+[32m+[m[32m            # run directory. Publish only after at least one binary has[m[41m[m
+backend/analysis/pipeline.py:447: trailing whitespace.
+[32m+[m[32m            # been analyzed successfully.[m[41m[m
+backend/analysis/pipeline.py:448: trailing whitespace.
+[32m+[m[32m            had_previous_output = _archive_existing_output([m[41m[m
+backend/analysis/pipeline.py:449: trailing whitespace.
+[32m+[m[32m                final_output_dir,[m[41m[m
+backend/analysis/pipeline.py:450: trailing whitespace.
+[32m+[m[32m                archive_dir,[m[41m[m
+backend/analysis/pipeline.py:451: trailing whitespace.
+[32m+[m[32m            )[m[41m[m
+backend/analysis/pipeline.py:452: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:453: trailing whitespace.
+[32m+[m[32m            try:[m[41m[m
+backend/analysis/pipeline.py:454: trailing whitespace.
+[32m+[m[32m                final_output_dir.parent.mkdir(parents=True, exist_ok=True)[m[41m[m
+backend/analysis/pipeline.py:455: trailing whitespace.
+[32m+[m[32m                os.replace(staged_output_dir, final_output_dir)[m[41m[m
+backend/analysis/pipeline.py:456: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:457: trailing whitespace.
+[32m+[m[32m                # Return canonical paths rather than temporary run paths.[m[41m[m
+backend/analysis/pipeline.py:458: trailing whitespace.
+[32m+[m[32m                for result in analyzed_results:[m[41m[m
+backend/analysis/pipeline.py:459: trailing whitespace.
+[32m+[m[32m                    old_path = Path(result.feature_vector_path)[m[41m[m
+backend/analysis/pipeline.py:460: trailing whitespace.
+[32m+[m[32m                    relative_path = old_path.relative_to(staged_output_dir)[m[41m[m
+backend/analysis/pipeline.py:461: trailing whitespace.
+[32m+[m[32m                    result.feature_vector_path = str([m[41m[m
+backend/analysis/pipeline.py:462: trailing whitespace.
+[32m+[m[32m                        final_output_dir / relative_path[m[41m[m
+backend/analysis/pipeline.py:463: trailing whitespace.
+[32m+[m[32m                    )[m[41m[m
+backend/analysis/pipeline.py:464: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:465: trailing whitespace.
+[32m+[m[32m                # Replace the previous feature records within the same[m[41m[m
+backend/analysis/pipeline.py:466: trailing whitespace.
+[32m+[m[32m                # database transaction as the new records and final status.[m[41m[m
+backend/analysis/pipeline.py:467: trailing whitespace.
+[32m+[m[32m                db.query(UploadedFeatures).filter([m[41m[m
+backend/analysis/pipeline.py:468: trailing whitespace.
+[32m+[m[32m                    UploadedFeatures.firmware_id == firmware_id[m[41m[m
+backend/analysis/pipeline.py:469: trailing whitespace.
+[32m+[m[32m                ).delete(synchronize_session=False)[m[41m[m
+backend/analysis/pipeline.py:470: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:471: trailing whitespace.
+[32m+[m[32m                db.add_all(new_feature_rows)[m[41m[m
+backend/analysis/pipeline.py:472: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:473: trailing whitespace.
+[32m+[m[32m                if primary_architecture and not firmware.architecture:[m[41m[m
+backend/analysis/pipeline.py:474: trailing whitespace.
+[32m+[m[32m                    firmware.architecture = primary_architecture[m[41m[m
+backend/analysis/pipeline.py:475: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:476: trailing whitespace.
+[32m+[m[32m                firmware.status = FirmwareStatus.COMPLETED[m[41m[m
+backend/analysis/pipeline.py:477: trailing whitespace.
+[32m+[m[32m                db.add(firmware)[m[41m[m
+backend/analysis/pipeline.py:478: trailing whitespace.
+[32m+[m[32m                db.commit()[m[41m[m
+backend/analysis/pipeline.py:479: trailing whitespace.
+[32m+[m[32m                db.refresh(firmware)[m[41m[m
+backend/analysis/pipeline.py:480: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:481: trailing whitespace.
+[32m+[m[32m            except Exception as exc:[m[41m[m
+backend/analysis/pipeline.py:482: trailing whitespace.
+[32m+[m[32m                db.rollback()[m[41m[m
+backend/analysis/pipeline.py:483: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:484: trailing whitespace.
+[32m+[m[32m                # Restore the previous published artifacts if the DB[m[41m[m
+backend/analysis/pipeline.py:485: trailing whitespace.
+[32m+[m[32m                # transaction or filesystem publication failed.[m[41m[m
+backend/analysis/pipeline.py:486: trailing whitespace.
+[32m+[m[32m                try:[m[41m[m
+backend/analysis/pipeline.py:487: trailing whitespace.
+[32m+[m[32m                    _restore_archived_output([m[41m[m
+backend/analysis/pipeline.py:488: trailing whitespace.
+[32m+[m[32m                        final_output_dir,[m[41m[m
+backend/analysis/pipeline.py:489: trailing whitespace.
+[32m+[m[32m                        archive_dir,[m[41m[m
+backend/analysis/pipeline.py:490: trailing whitespace.
+[32m+[m[32m                        had_previous_output,[m[41m[m
+backend/analysis/pipeline.py:491: trailing whitespace.
+[32m+[m[32m                    )[m[41m[m
+backend/analysis/pipeline.py:492: trailing whitespace.
+[32m+[m[32m                except Exception:[m[41m[m
+backend/analysis/pipeline.py:493: trailing whitespace.
+[32m+[m[32m                    logger.exception([m[41m[m
+backend/analysis/pipeline.py:494: trailing whitespace.
+[32m+[m[32m                        "Could not restore prior artifacts for firmware_id=%d",[m[41m[m
+backend/analysis/pipeline.py:495: trailing whitespace.
+[32m+[m[32m                        firmware_id,[m[41m[m
+backend/analysis/pipeline.py:496: trailing whitespace.
+[32m+[m[32m                    )[m[41m[m
+backend/analysis/pipeline.py:497: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:498: trailing whitespace.
+[32m+[m[32m                logger.exception([m[41m[m
+backend/analysis/pipeline.py:499: trailing whitespace.
+[32m+[m[32m                    "Could not finalize analysis for firmware_id=%d",[m[41m[m
+backend/analysis/pipeline.py:500: trailing whitespace.
+[32m+[m[32m                    firmware_id,[m[41m[m
+backend/analysis/pipeline.py:501: trailing whitespace.
+[32m+[m[32m                )[m[41m[m
+backend/analysis/pipeline.py:502: trailing whitespace.
+[32m+[m[32m                raise HTTPException([m[41m[m
+backend/analysis/pipeline.py:503: trailing whitespace.
+[32m+[m[32m                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,[m[41m[m
+backend/analysis/pipeline.py:504: trailing whitespace.
+[32m+[m[32m                    detail="Could not finalize firmware analysis.",[m[41m[m
+backend/analysis/pipeline.py:505: trailing whitespace.
+[32m+[m[32m                ) from exc[m[41m[m
+backend/analysis/pipeline.py:506: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:507: trailing whitespace.
+[32m+[m[32m            # The new DB records and published artifacts are now committed.[m[41m[m
+backend/analysis/pipeline.py:508: trailing whitespace.
+[32m+[m[32m            # Old artifacts are no longer needed.[m[41m[m
+backend/analysis/pipeline.py:509: trailing whitespace.
+[32m+[m[32m            _remove_directory(archive_dir)[m[41m[m
+backend/analysis/pipeline.py:510: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:511: trailing whitespace.
+[32m+[m[32m            return FirmwareAnalysisResponse([m[41m[m
+backend/analysis/pipeline.py:512: trailing whitespace.
+[32m+[m[32m                firmware_id=firmware_id,[m[41m[m
+backend/analysis/pipeline.py:513: trailing whitespace.
+[32m+[m[32m                status=firmware.status,[m[41m[m
+backend/analysis/pipeline.py:514: trailing whitespace.
+[32m+[m[32m                extraction_success=extraction_result.success,[m[41m[m
+backend/analysis/pipeline.py:515: trailing whitespace.
+[32m+[m[32m                extraction_message=extraction_message,[m[41m[m
+backend/analysis/pipeline.py:516: trailing whitespace.
+[32m+[m[32m                binaries_discovered=len(discovered_binaries),[m[41m[m
+backend/analysis/pipeline.py:517: trailing whitespace.
+[32m+[m[32m                analyzed_binaries=analyzed_results,[m[41m[m
+backend/analysis/pipeline.py:518: trailing whitespace.
+[32m+[m[32m                analysis_time_ms=round([m[41m[m
+backend/analysis/pipeline.py:519: trailing whitespace.
+[32m+[m[32m                    (time.perf_counter() - start_time) * 1000,[m[41m[m
+backend/analysis/pipeline.py:520: trailing whitespace.
+[32m+[m[32m                    2,[m[41m[m
+backend/analysis/pipeline.py:521: trailing whitespace.
+[32m+[m[32m                ),[m[41m[m
+backend/analysis/pipeline.py:523: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:524: trailing whitespace.
+[32m+[m[32m        except HTTPException:[m[41m[m
+backend/analysis/pipeline.py:525: trailing whitespace.
+[32m+[m[32m            raise[m[41m[m
+backend/analysis/pipeline.py:526: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:528: trailing whitespace.
+[32m+[m[32m            db.rollback()[m[41m[m
+backend/analysis/pipeline.py:530: trailing whitespace.
+[32m+[m[32m            logger.exception([m[41m[m
+backend/analysis/pipeline.py:531: trailing whitespace.
+[32m+[m[32m                "Unexpected analysis failure for firmware_id=%d",[m[41m[m
+backend/analysis/pipeline.py:532: trailing whitespace.
+[32m+[m[32m                firmware_id,[m[41m[m
+backend/analysis/pipeline.py:533: trailing whitespace.
+[32m+[m[32m            )[m[41m[m
+backend/analysis/pipeline.py:535: trailing whitespace.
+[32m+[m[32m            # Best-effort persistence of FAILED status. Do not claim[m[41m[m
+backend/analysis/pipeline.py:536: trailing whitespace.
+[32m+[m[32m            # success if this commit also fails.[m[41m[m
+backend/analysis/pipeline.py:537: trailing whitespace.
+[32m+[m[32m            try:[m[41m[m
+backend/analysis/pipeline.py:538: trailing whitespace.
+[32m+[m[32m                failed_firmware = ([m[41m[m
+backend/analysis/pipeline.py:539: trailing whitespace.
+[32m+[m[32m                    db.query(Firmware)[m[41m[m
+backend/analysis/pipeline.py:540: trailing whitespace.
+[32m+[m[32m                    .filter(Firmware.id == firmware_id)[m[41m[m
+backend/analysis/pipeline.py:541: trailing whitespace.
+[32m+[m[32m                    .first()[m[41m[m
+backend/analysis/pipeline.py:542: trailing whitespace.
+[32m+[m[32m                )[m[41m[m
+backend/analysis/pipeline.py:543: trailing whitespace.
+[32m+[m[32m                if failed_firmware is not None:[m[41m[m
+backend/analysis/pipeline.py:544: trailing whitespace.
+[32m+[m[32m                    failed_firmware.status = FirmwareStatus.FAILED[m[41m[m
+backend/analysis/pipeline.py:545: trailing whitespace.
+[32m+[m[32m                    db.add(failed_firmware)[m[41m[m
+backend/analysis/pipeline.py:546: trailing whitespace.
+[32m+[m[32m                    db.commit()[m[41m[m
+backend/analysis/pipeline.py:547: trailing whitespace.
+[32m+[m[32m            except Exception:[m[41m[m
+backend/analysis/pipeline.py:548: trailing whitespace.
+[32m+[m[32m                db.rollback()[m[41m[m
+backend/analysis/pipeline.py:549: trailing whitespace.
+[32m+[m[32m                logger.exception([m[41m[m
+backend/analysis/pipeline.py:550: trailing whitespace.
+[32m+[m[32m                    "Could not persist FAILED status for firmware_id=%d",[m[41m[m
+backend/analysis/pipeline.py:551: trailing whitespace.
+[32m+[m[32m                    firmware_id,[m[41m[m
+backend/analysis/pipeline.py:552: trailing whitespace.
+[32m+[m[32m                )[m[41m[m
+backend/analysis/pipeline.py:554: trailing whitespace.
+[32m+[m[32m            raise HTTPException([m[41m[m
+backend/analysis/pipeline.py:555: trailing whitespace.
+[32m+[m[32m                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,[m[41m[m
+backend/analysis/pipeline.py:556: trailing whitespace.
+[32m+[m[32m                detail="Firmware analysis failed.",[m[41m[m
+backend/analysis/pipeline.py:557: trailing whitespace.
+[32m+[m[32m            ) from exc[m[41m[m
+backend/analysis/pipeline.py:558: trailing whitespace.
+[32m+[m[41m[m
+backend/analysis/pipeline.py:559: trailing whitespace.
+[32m+[m[32m        finally:[m[41m[m
+backend/analysis/pipeline.py:560: trailing whitespace.
+[32m+[m[32m            # Only remove this run's temporary directory. Never remove[m[41m[m
+backend/analysis/pipeline.py:561: trailing whitespace.
+[32m+[m[32m            # or modify the uploaded source firmware.[m[41m[m
+backend/analysis/pipeline.py:562: trailing whitespace.
+[32m+[m[32m            _remove_directory(run_root)[m[41m[m
+backend/ml/predict.py:464: trailing whitespace.
+[32m+[m[41m    [m
+backend/ml/predict.py:585: new blank line at EOF.
+backend/models.py:84: trailing whitespace.
+[32m+[m[41m    [m
+backend/schemas.py:185: trailing whitespace.
+[32m+[m[41m[m
+backend/schemas.py:190: trailing whitespace.
+[32m+[m[32m    category: str[m[41m[m
+backend/schemas.py:196: trailing whitespace.
+[32m+[m[41m[m
+backend/schemas.py:197: trailing whitespace.
+[32m+[m[41m[m
+backend/schemas.py:208: trailing whitespace.
+[32m+[m[32m    risk_factors: list[RiskFactorSchema][m[41m[m
+backend/schemas.py:212: trailing whitespace.
+[32m+[m[41m[m
