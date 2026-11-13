@@ -1,10 +1,9 @@
- 
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, BackgroundTasks, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
@@ -73,28 +72,71 @@ def health_check() -> dict:
     }
 
 
+def _run_firmware_analysis_in_background(firmware_id: int) -> None:
+    """Run analysis after upload using an independent database session.
+
+    FastAPI background tasks execute after the response has been sent. A
+    fresh session is required because the request-scoped session may already
+    have been closed by the time this function runs.
+    """
+    db = SessionLocal()
+    try:
+        logger.info(
+            "Starting automatic background analysis for firmware_id=%d",
+            firmware_id,
+        )
+        result = run_firmware_analysis(firmware_id, db)
+        logger.info(
+            "Automatic background analysis finished for firmware_id=%d; status=%s",
+            firmware_id,
+            getattr(result, "status", "unknown"),
+        )
+    except Exception:
+        logger.exception(
+            "Automatic background analysis failed for firmware_id=%d",
+            firmware_id,
+        )
+    finally:
+        db.close()
+
+
 @router.post(
     "/firmware/upload",
     response_model=None,
     status_code=status.HTTP_200_OK,
-    summary="Upload a firmware file for intake",
+    summary="Upload firmware and automatically start analysis",
 )
 def upload_firmware(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(..., description="Firmware image (.bin, .img, or .elf)"),
     db: Session = Depends(get_db),
 ) -> FirmwareUploadResponse | FirmwareDuplicateResponse:
-    """Accept a firmware upload, validate it, and record it in the database.
+    """Upload firmware and queue analysis for every newly stored image.
 
-    Validates the file's extension, MIME type, and size; streams it to
-    disk while computing its SHA-256 hash; checks for a duplicate by
-    hash; and, for a new firmware, stores it under
-    `uploads/<firmware_id>/<original_filename>` and records its metadata.
-
-    This endpoint does not extract, analyze, or otherwise inspect the
-    firmware's contents -- see later phases for that functionality.
+    The upload helper validates and stores the file, commits its database
+    record and storage path, and returns the firmware ID. Only after that
+    succeeds is analysis queued. Duplicate uploads are returned unchanged
+    and are not analyzed again.
     """
     try:
-        return handle_firmware_upload(file, db)
+        upload_result = handle_firmware_upload(file, db)
+
+        if isinstance(upload_result, FirmwareUploadResponse):
+            background_tasks.add_task(
+                _run_firmware_analysis_in_background,
+                upload_result.firmware_id,
+            )
+            logger.info(
+                "Queued automatic analysis for newly uploaded firmware_id=%d",
+                upload_result.firmware_id,
+            )
+        else:
+            logger.info(
+                "Skipping automatic analysis for duplicate firmware_id=%d",
+                upload_result.firmware_id,
+            )
+
+        return upload_result
     except HTTPException:
         raise
     except Exception:
@@ -809,4 +851,3 @@ def explain_firmware_endpoint(
         return explanations[0]
 
     return MultipleExplanations(firmware_id=firmware_id, explanations=explanations, failed=failures)
-
